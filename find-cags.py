@@ -56,7 +56,7 @@ def read_json(fp):
                 None, 'rb', fileobj=bytestream).read().decode('utf-8')
         else:
             # Read text
-            got_text = retr['Body'].read()
+            got_text = retr['Body'].read().decode('utf-8')
 
         # Parse the JSON
         dat = json.loads(got_text)
