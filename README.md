@@ -29,6 +29,7 @@ Therefore the features that must be specified by the user are:
   * Key for the gene_id within each element of the list (e.g. "id")
   * Key for the abundance metric within each element (e.g. "depth")
 
+**NOTE**: All abundance metric values must be >= 0
 
 #### Sample Sheet
 
@@ -50,3 +51,52 @@ individual genes for a set of microbiome samples. That data is found in the
 `tests/` folder. There is also a JSON file indicating which sample goes
 with which file, which is formatted as a simple dict (keys are sample names
 and values are file locations) and located in `tests/sample_sheet.json`.
+
+
+#### Normalization
+
+The `--normalize` metric accepts two values, `median` and `sum`. In each case
+the abundance metric for each gene within each sample is divided by either
+the `median` or the `sum` of the abundance metrics for all genes within that
+sample. When calculating the `median`, only genes with non-zero abundances
+are considered.
+
+
+#### Distance Metric
+
+Any of the distance metrics supported by `scipy.spatial.distance.cdist` are
+supported. See [the scipy documentation for more details](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.distance.cdist.html)
+
+
+#### Clustering Method
+
+At the moment we will support single-linkage clustering, using a single distance
+threshold.
+
+
+#### Invocation
+
+```
+usage: find-cags.py [-h] --sample-sheet SAMPLE_SHEET --output-prefix
+                    OUTPUT_PREFIX --output-folder OUTPUT_FOLDER
+                    [--metric METRIC] [--normalization NORMALIZATION]
+                    [--max-dist MAX_DIST]
+
+Find a set of co-abundant genes
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --sample-sheet SAMPLE_SHEET
+                        Location for sample sheet (.json[.gz]).
+  --output-prefix OUTPUT_PREFIX
+                        Prefix for output files.
+  --output-folder OUTPUT_FOLDER
+                        Folder to place results. (Supported: s3://, or local
+                        path).
+  --metric METRIC       Distance metric calculation method, see
+                        scipy.spatial.distance.
+  --normalization NORMALIZATION
+                        Normalization factor per-sample (median or sum).
+  --max-dist MAX_DIST   Maximum distance for single-linkage clustering.
+  ```
+  
