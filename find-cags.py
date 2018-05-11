@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 
 import os
+import io
 import sys
 import uuid
 import time
 import gzip
 import json
+import boto3
 import shutil
 import logging
 import argparse
 import traceback
+import pandas as pd
+from collections import defaultdict
+from scipy.spatial.distance import cdist
 
 
 def exit_and_clean_up(temp_folder):
@@ -18,7 +23,7 @@ def exit_and_clean_up(temp_folder):
     logging.info("There was an unexpected failure")
     exc_type, exc_value, exc_traceback = sys.exc_info()
     for line in traceback.format_tb(exc_traceback):
-        logging.info(line.encode("utf-8"))
+        logging.info(line)
 
     # Delete any files that were created for this sample
     logging.info("Removing temporary folder: " + temp_folder)
@@ -31,27 +36,269 @@ def exit_and_clean_up(temp_folder):
 
 
 def read_json(fp):
-    return json.load(open(fp, "rt"))
+    assert fp.endswith((".json", ".json.gz"))
+    logging.info("Reading in " + fp)
+    if fp.startswith("s3://"):
+        # Parse the S3 bucket and key
+        bucket_name, key_name = fp[:5].split("/", 1)
+
+        # Connect to the S3 boto3 client
+        s3 = boto3.client('s3')
+
+        # Download the object
+        retr = s3.get_object(Bucket=bucket_name, Key=key_name)
+
+        if fp.endswith(".gz"):
+            # Parse GZIP
+            bytestream = io.BytesIO(retr['Body'].read())
+            got_text = gzip.GzipFile(
+                None, 'rb', fileobj=bytestream).read().decode('utf-8')
+        else:
+            # Read text
+            got_text = retr['Body'].read()
+
+        # Parse the JSON
+        dat = json.loads(got_text)
+
+    else:
+        assert os.path.exists(fp)
+
+        if fp.endswith(".gz"):
+            dat = json.load(gzip.open(fp, "rt"))
+        else:
+            dat = json.load(open(fp, "rt"))
+
+    # Make sure that the sample sheet is a dictionary
+    assert isinstance(dat, dict)    
+
+    return dat
 
 
-def make_abundance_dataframe(sample_sheet):
-    pass
+def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_key, normalization):
+    """Make a single DataFrame with the abundance from all samples."""
+
+    # Normalize each sample's data
+    if normalization is not None:
+        assert normalization in ["median", "sum"]
+        logging.info("Normalizing the abundance values by " + normalization)
+
+    # Collect all of the abundance information in this single dict
+    dat = {}
+
+    # Iterate over each sample
+    for sample_name, sample_path in sample_sheet.items():
+        # Get the JSON for this particular sample
+        sample_dat = read_json(sample_path)
+
+        # Make sure that the key for the results is in this file
+        assert results_key in sample_dat
+
+        # Subset down to the list of results
+        sample_dat = sample_dat[results_key]
+        assert isinstance(sample_dat, list)
+
+        # Make sure that every element in the list has the indicated keys
+        for d in sample_dat:
+            assert abundance_key in d
+            assert gene_id_key in d
+
+        # Format as a Series
+        sample_dat = pd.Series({
+            d[gene_id_key]: d[abundance_key]
+            for d in sample_dat
+        })
+
+        # Normalize the abundance
+        if normalization == "median":
+            sample_dat = sample_dat / sample_dat.median()
+        elif normalization == "sum":
+            sample_dat = sample_dat / sample_dat.sum()
+
+        # Add the data to the total
+        dat[sample_name] = sample_dat
+
+    logging.info("Formatting as a DataFrame")
+    dat = pd.DataFrame(dat).fillna(0)
+
+    logging.info("Read in data for {:,} genes across {:,} samples".format(
+        dat.shape[0],
+        dat.shape[1]
+    ))
+
+    return dat
 
 
-def find_pairwise_connections(df, metric, max_dist):
+def find_pairwise_connections_worker(d1, d2, metric, max_dist):
+
+    df1, df1_index = d1
+    df2, df2_index = d2
+
+    d = cdist(df1, df2, metric=metric)
+
+    return [
+        (name1, name2)
+        for ix1, name1 in enumerate(df1_index)
+        for ix2, name2 in enumerate(df2_index)
+        if d[ix1, ix2] <= max_dist and name1 < name2
+    ]
+
+
+def find_pairwise_connections(df, metric, max_dist, chunk_size=100):
+    gene_names = df.index.values
+    # Break up the DataFrame into chunks
+    chunks = [
+        (df.values[n:(n + chunk_size)], gene_names[n:(n + chunk_size)])
+        for n in range(0, df.shape[0], chunk_size)
+    ]
+
+    connections = [
+        find_pairwise_connections_worker(d1, d2, metric, max_dist)
+        for d1 in chunks
+        for d2 in chunks
+    ]
+
+    # Collapse the list
+    connections = [
+        c
+        for conn in connections
+        for c in conn
+    ]
+
+    # Calculate which genes are singletons with no connections
+    singletons = set(gene_names) - set(
+        [
+            gene_id
+            for connection in connections
+            for gene_id in connection
+        ]
+    )
     return connections, singletons
 
 
 def single_linkage_clustering(connections):
-    pass
+    gene_clusters = {}
+    next_cluster_id = 0
+
+    for g1, g2 in connections:
+        if g1 in gene_clusters:
+            if g2 in gene_clusters:
+                # Already part of the same cluster
+                if gene_clusters[g1] == gene_clusters[g2]:
+                    pass
+
+                # Need to combine two clusters
+                else:
+                    genes_to_combine = [
+                        gene_id
+                        for gene_id, cluster_id in gene_clusters.items()
+                        if cluster_id in [gene_clusters[g1], gene_clusters[g2]]
+                    ]
+                    for gene_id in genes_to_combine:
+                        gene_clusters[gene_id] = next_cluster_id
+                    # Increment the cluster counter
+                    next_cluster_id += 1
+
+            # Add g2 to the cluster for g1
+            else:
+                gene_clusters[g2] = gene_clusters[g1]
+
+        # g1 is not part of any cluster
+        else:
+
+            # g2 is already in a cluster
+            if g2 in gene_clusters:
+                # Assign g1 to the cluster for g1
+                gene_clusters[g1] = gene_clusters[g2]
+            
+            # Neither gene is in a cluster yet
+            else:
+                gene_clusters[g1] = next_cluster_id
+                gene_clusters[g2] = next_cluster_id
+                # Increment the cluster counter
+                next_cluster_id += 1
+
+    # Reformat the clusters as a dict of sets
+    cags = defaultdict(set)
+    for gene_id, cluster_id in gene_clusters.items():
+        cags[cluster_id].add(gene_id)
+
+    # Return a dict of lists (numbering from 0)
+    return {
+        "cag_{}".format(ix): list(s)
+        for ix, s in enumerate(cags.values())
+    }
 
 
 def make_summary_abund_df(df, cags, singletons):
-    pass
+    """Make a DataFrame with the average value for each CAG."""
+    summary_df = pd.DataFrame({
+        cag_ix: df.loc[cag].mean()
+        for cag_ix, cag in cags.items()
+    }).T
+
+    # Add in the singletons
+    summary_df = pd.concat([
+        summary_df,
+        df.loc[singletons]
+    ])
+
+    assert summary_df.shape[0] == len(cags) + len(singletons)
+    assert summary_df.shape[1] == df.shape[1]
+
+    return summary_df
 
 
-def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder):
-    pass
+def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, temp_folder):
+    """Write out all of the results to a file and copy to a final output directory"""
+
+    # Make sure the output folder ends with a '/'
+    if output_folder.endswith("/") is False:
+        output_folder = output_folder + "/"
+
+    if output_folder.startswith("s3://"):
+        s3 = boto3.resource('s3')
+
+    for suffix, obj in [
+        (".feather", df),
+        (".cags.feather", summary_df),
+        (".cags.json.gz", cags),
+        (".logs.txt", log_fp)
+    ]:
+        fp = os.path.join(temp_folder, output_prefix + suffix)
+        if suffix.endswith(".feather"):
+            obj.reset_index().to_feather(fp)
+        elif suffix.endswith(".json.gz"):
+            json.dump(obj, gzip.open(fp, "wt"))
+        elif suffix.endswith(".txt"):
+            with open(fp, "wt") as f:
+                f.write(obj)
+        else:
+            raise Exception("Object cannot be written, no method for " + suffix)
+
+        if output_folder.startswith("s3://"):
+            bucket, prefix = output_folder[5:].split("/", 1)
+
+            # Make the full name of the destination key
+            file_prefix = prefix + output_prefix + suffix
+
+            # Open a file handle to copy the file up to S3
+            data = open(fp, 'rb')
+
+            # Copy the file
+            logging.info("Copying {} to {}/{}".format(
+                fp,
+                bucket,
+                file_prefix
+            ))
+            s3.Bucket(bucket).put_object(Key=file_prefix, Body=data)
+
+
+        else:
+            # Copy as a local file
+            logging.info("Copying {} to {}".format(
+                fp, output_folder
+            ))
+            shutil.copy(fp, output_folder)
 
 
 def find_cags(
@@ -61,7 +308,10 @@ def find_cags(
     metric="euclidean",
     normalization=None,
     max_dist=0.1,
-    temp_folder="/scratch"
+    temp_folder="/scratch",
+    results_key="results",
+    abundance_key="depth",
+    gene_id_key="id",
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -97,25 +347,15 @@ def find_cags(
     # Make the abundance DataFrame
     logging.info("Making the abundance DataFrame")
     try:
-        df = make_abundance_dataframe(sample_sheet)
+        df = make_abundance_dataframe(
+            sample_sheet,
+            results_key,
+            abundance_key,
+            gene_id_key,
+            normalization
+        )
     except:
         exit_and_clean_up(temp_folder)
-
-    # Normalize the abundance DataFrame
-    if normalization is not None:
-        assert normalization in ["median", "sum"]
-        logging.info("Normalizing the abundance values by " + normalization)
-
-        if normalization == "median":
-            try:
-                df = df / df.median()
-            except:
-                exit_and_clean_up(temp_folder)
-        elif normalization == "sum":
-            try:
-                df = df / df.sum()
-            except:
-                exit_and_clean_up(temp_folder)
 
     # Get the pairwise distances under the threshold
     logging.info("Finding pairwise connections with {} <= {}".format(metric, max_dist))
@@ -123,6 +363,7 @@ def find_cags(
         connections, singletons = find_pairwise_connections(df, metric, max_dist)
     except:
         exit_and_clean_up(temp_folder)
+
     logging.info("Found {:,} pairwise connections, and {:,} singletons".format(
         len(connections),
         len(singletons)
@@ -143,10 +384,13 @@ def find_cags(
     except:
         exit_and_clean_up(temp_folder)
 
+    # Read in the logs
+    logs = "\n".join(open(log_fp, "rt").readlines())
+
     # Return the results
     logging.info("Returning results to " + output_folder)
     try:
-        return_results(df, summary_df, cags, log_fp, output_prefix, output_folder)
+        return_results(df, summary_df, cags, logs, output_prefix, output_folder, temp_folder)
     except:
         exit_and_clean_up(temp_folder)
 
@@ -183,14 +427,29 @@ if __name__ == "__main__":
                         help="Normalization factor per-sample (median or sum).")
     parser.add_argument("--max-dist",
                         type=float,
-                        default=0.1,
+                        default=0.01,
                         help="Maximum distance for single-linkage clustering.")
     parser.add_argument("--temp-folder",
                         type=str,
                         default="/scratch",
                         help="Folder for temporary files.")
+    parser.add_argument("--results-key",
+                        type=str,
+                        default="results",
+                        help="Key identifying the list of gene abundances for each sample JSON.")
+    parser.add_argument("--abundance-key",
+                        type=str,
+                        default="depth",
+                        help="Key identifying the abundance value for each element in the results list.")
+    parser.add_argument("--gene-id-key",
+                        type=str,
+                        default="id",
+                        help="Key identifying the gene ID for each element in the results list.")
 
     args = parser.parse_args(sys.argv[1:])
+
+    # Sample sheet is in JSON format
+    assert args.sample_sheet.endswith((".json", ".json.gz"))
 
     # Normalization factor is absent, 'median', or 'sum'
     assert args.normalization in [None, "median", "sum"]

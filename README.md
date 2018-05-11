@@ -80,7 +80,10 @@ threshold.
 usage: find-cags.py [-h] --sample-sheet SAMPLE_SHEET --output-prefix
                     OUTPUT_PREFIX --output-folder OUTPUT_FOLDER
                     [--metric METRIC] [--normalization NORMALIZATION]
-                    [--max-dist MAX_DIST]
+                    [--max-dist MAX_DIST] [--temp-folder TEMP_FOLDER]
+                    [--results-key RESULTS_KEY]
+                    [--abundance-key ABUNDANCE_KEY]
+                    [--gene-id-key GENE_ID_KEY]
 
 Find a set of co-abundant genes
 
@@ -98,5 +101,15 @@ optional arguments:
   --normalization NORMALIZATION
                         Normalization factor per-sample (median or sum).
   --max-dist MAX_DIST   Maximum distance for single-linkage clustering.
+  --temp-folder TEMP_FOLDER
+                        Folder for temporary files.
+  --results-key RESULTS_KEY
+                        Key identifying the list of gene abundances for each
+                        sample JSON.
+  --abundance-key ABUNDANCE_KEY
+                        Key identifying the abundance value for each element
+                        in the results list.
+  --gene-id-key GENE_ID_KEY
+                        Key identifying the gene ID for each element in the
+                        results list.
   ```
-  
