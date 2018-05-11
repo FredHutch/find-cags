@@ -146,7 +146,6 @@ def find_pairwise_connections_worker(input_data):
 
 
 def find_pairwise_connections(df, metric, max_dist, chunk_size=1000, threads=1):
-    df = df.head(10000)
     gene_names = df.index.values
     # Break up the DataFrame into chunks
     chunks = [
@@ -321,6 +320,7 @@ def find_cags(
     abundance_key="depth",
     gene_id_key="id",
     threads=1,
+    test=False,
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -365,6 +365,11 @@ def find_cags(
         )
     except:
         exit_and_clean_up(temp_folder)
+
+    # If this is being run in testing mode, subset to 1,000 genes
+    if test:
+        logging.info("Running in testing mode, subset to 1,000 genes")
+        df = df.head(1000)
 
     # Get the pairwise distances under the threshold
     logging.info("Finding pairwise connections with {} <= {}".format(metric, max_dist))
@@ -458,6 +463,9 @@ if __name__ == "__main__":
                         type=int,
                         default=1,
                         help="Number of threads to use.")
+    parser.add_argument("--test",
+                        action="store_true",
+                        help="Run in testing mode and only process a subset of 1,000 genes.")
 
     args = parser.parse_args(sys.argv[1:])
 
