@@ -41,7 +41,7 @@ def read_json(fp):
     logging.info("Reading in " + fp)
     if fp.startswith("s3://"):
         # Parse the S3 bucket and key
-        bucket_name, key_name = fp[:5].split("/", 1)
+        bucket_name, key_name = fp[5:].split("/", 1)
 
         # Connect to the S3 boto3 client
         s3 = boto3.client('s3')
