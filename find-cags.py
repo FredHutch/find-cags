@@ -13,6 +13,7 @@ import logging
 import argparse
 import traceback
 import pandas as pd
+from multiprocessing import Pool
 from collections import defaultdict
 from scipy.spatial.distance import cdist
 
@@ -128,7 +129,8 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     return dat
 
 
-def find_pairwise_connections_worker(d1, d2, metric, max_dist):
+def find_pairwise_connections_worker(input_data):
+    d1, d2, metric, max_dist = input_data
 
     df1, df1_index = d1
     df2, df2_index = d2
@@ -143,7 +145,8 @@ def find_pairwise_connections_worker(d1, d2, metric, max_dist):
     ]
 
 
-def find_pairwise_connections(df, metric, max_dist, chunk_size=100):
+def find_pairwise_connections(df, metric, max_dist, chunk_size=1000, threads=1):
+    df = df.head(10000)
     gene_names = df.index.values
     # Break up the DataFrame into chunks
     chunks = [
@@ -151,11 +154,16 @@ def find_pairwise_connections(df, metric, max_dist, chunk_size=100):
         for n in range(0, df.shape[0], chunk_size)
     ]
 
-    connections = [
-        find_pairwise_connections_worker(d1, d2, metric, max_dist)
-        for d1 in chunks
-        for d2 in chunks
-    ]
+    p = Pool(threads)
+
+    connections = p.map(
+        find_pairwise_connections_worker, 
+        [
+            (d1, d2, metric, max_dist)
+            for d1 in chunks
+            for d2 in chunks
+        ]
+    )
 
     # Collapse the list
     connections = [
@@ -312,6 +320,7 @@ def find_cags(
     results_key="results",
     abundance_key="depth",
     gene_id_key="id",
+    threads=1,
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -360,7 +369,7 @@ def find_cags(
     # Get the pairwise distances under the threshold
     logging.info("Finding pairwise connections with {} <= {}".format(metric, max_dist))
     try:
-        connections, singletons = find_pairwise_connections(df, metric, max_dist)
+        connections, singletons = find_pairwise_connections(df, metric, max_dist, threads=threads)
     except:
         exit_and_clean_up(temp_folder)
 
@@ -445,6 +454,10 @@ if __name__ == "__main__":
                         type=str,
                         default="id",
                         help="Key identifying the gene ID for each element in the results list.")
+    parser.add_argument("--threads",
+                        type=int,
+                        default=1,
+                        help="Number of threads to use.")
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -456,6 +469,8 @@ if __name__ == "__main__":
 
     # max-dist is >=0
     assert args.max_dist >= 0
+
+    assert args.threads >= 1
 
     # Make sure the temporary folder exists
     assert os.path.exists(args.temp_folder)

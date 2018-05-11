@@ -112,4 +112,5 @@ optional arguments:
   --gene-id-key GENE_ID_KEY
                         Key identifying the gene ID for each element in the
                         results list.
+  --threads THREADS     Number of threads to use.
   ```
