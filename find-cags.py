@@ -145,7 +145,7 @@ def find_pairwise_connections_worker(input_data):
     ]
 
 
-def find_pairwise_connections(df, metric, max_dist, chunk_size=1000, threads=1):
+def find_pairwise_connections(df, metric, max_dist, chunk_size=100000, threads=1):
     gene_names = df.index.values
     # Break up the DataFrame into chunks
     chunks = [
@@ -321,6 +321,7 @@ def find_cags(
     gene_id_key="id",
     threads=1,
     test=False,
+    chunk_size=1000,
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -374,7 +375,12 @@ def find_cags(
     # Get the pairwise distances under the threshold
     logging.info("Finding pairwise connections with {} <= {}".format(metric, max_dist))
     try:
-        connections, singletons = find_pairwise_connections(df, metric, max_dist, threads=threads)
+        connections, singletons = find_pairwise_connections(
+            df,
+            metric,
+            max_dist,
+            threads=threads,
+            chunk_size=chunk_size)
     except:
         exit_and_clean_up(temp_folder)
 
@@ -463,6 +469,10 @@ if __name__ == "__main__":
                         type=int,
                         default=1,
                         help="Number of threads to use.")
+    parser.add_argument("--chunk-size",
+                        type=int,
+                        default=100000,
+                        help="Size of chunks to break abundance table into.")
     parser.add_argument("--test",
                         action="store_true",
                         help="Run in testing mode and only process a subset of 1,000 genes.")
