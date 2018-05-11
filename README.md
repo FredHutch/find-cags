@@ -1,5 +1,7 @@
 ## Find Co-Abundant Groups of Genes
 
+[![Docker Repository on Quay](https://quay.io/repository/fhcrc-microbiome/find-cags/status "Docker Repository on Quay")](https://quay.io/repository/fhcrc-microbiome/find-cags)
+
 #### Purpose
 
 Analyze gene abundance data from a large set of samples and calculate
