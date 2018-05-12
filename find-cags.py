@@ -155,14 +155,23 @@ def find_pairwise_connections(df, metric, max_dist, chunk_size=100000, threads=1
 
     p = Pool(threads)
 
-    connections = p.map(
-        find_pairwise_connections_worker, 
-        [
-            (d1, d2, metric, max_dist)
-            for d1 in chunks
-            for d2 in chunks
-        ]
-    )
+    connections = []
+    
+    for ix, d1 in enumerate(chunks):
+        start_time = time.time()
+        connections.extend(p.map(
+            find_pairwise_connections_worker, 
+            [
+                (d1, d2, metric, max_dist)
+                for d2 in chunks
+            ]
+        ))
+        logging.info("Processed {:,} / {:,} connections ({:,} seconds elapsed)".format(
+            ix + 1,
+            len(chunks),
+            round(time.time() - start_time, 2)
+        ))
+
 
     # Collapse the list
     connections = [
