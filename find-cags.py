@@ -145,15 +145,13 @@ def find_pairwise_connections_worker(input_data):
     ]
 
 
-def find_pairwise_connections(df, metric, max_dist, chunk_size=100000, threads=1):
+def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000, threads=1):
     gene_names = df.index.values
     # Break up the DataFrame into chunks
     chunks = [
         (df.values[n:(n + chunk_size)], gene_names[n:(n + chunk_size)])
         for n in range(0, df.shape[0], chunk_size)
     ]
-
-    p = Pool(threads)
 
     connections = []
     
@@ -329,6 +327,7 @@ def find_cags(
     abundance_key="depth",
     gene_id_key="id",
     threads=1,
+    min_samples=1,
     test=False,
     chunk_size=1000,
 ):
@@ -363,6 +362,9 @@ def find_cags(
     except:
         exit_and_clean_up(temp_folder)
 
+    # Make a pool of workers
+    p = Pool(threads)
+
     # Make the abundance DataFrame
     logging.info("Making the abundance DataFrame")
     try:
@@ -376,6 +378,24 @@ def find_cags(
     except:
         exit_and_clean_up(temp_folder)
 
+    # If min_samples > 1, subset the genes
+    if min_samples > 1:
+        logging.info("Subsetting to genes found in at least {} samples".format(min_samples))
+
+        # Keep track of the number of genes filtered, and the time elapsed
+        n_before_filtering = df.shape[0]
+        start_time = time.time()
+
+        # Filter
+        df = df.loc[(df > 0).sum(axis=1) >= min_samples]
+
+        logging.info("{:,} / {:,} genes found in >= {:,} samples ({:,} seconds elapsed)".format(
+            df.shape[0],
+            n_before_filtering,
+            min_samples,
+            round(time.time() - start_time, 2)
+        ))
+
     # If this is being run in testing mode, subset to 1,000 genes
     if test:
         logging.info("Running in testing mode, subset to 1,000 genes")
@@ -388,6 +408,7 @@ def find_cags(
             df,
             metric,
             max_dist,
+            p,
             threads=threads,
             chunk_size=chunk_size)
     except:
@@ -482,6 +503,10 @@ if __name__ == "__main__":
                         type=int,
                         default=100000,
                         help="Size of chunks to break abundance table into.")
+    parser.add_argument("--min-samples",
+                        type=int,
+                        default=1,
+                        help="Filter genes by the number of samples they are found in.")
     parser.add_argument("--test",
                         action="store_true",
                         help="Run in testing mode and only process a subset of 1,000 genes.")
@@ -498,6 +523,8 @@ if __name__ == "__main__":
     assert args.max_dist >= 0
 
     assert args.threads >= 1
+
+    assert args.min_samples >= 1
 
     # Make sure the temporary folder exists
     assert os.path.exists(args.temp_folder)
