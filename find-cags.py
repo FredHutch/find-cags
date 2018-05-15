@@ -141,11 +141,39 @@ def find_pairwise_connections_worker(input_data):
         (name1, name2)
         for ix1, name1 in enumerate(df1_index)
         for ix2, name2 in enumerate(df2_index)
-        if d[ix1, ix2] <= max_dist and name1 < name2
+        if d[ix1, ix2] <= max_dist
     ]
 
 
-def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000, threads=1):
+def generate_combinations(chunks, metric, max_dist):
+    """Iteratively yield all pairwise combinations of these chunks."""
+
+    # Calculate the total number of combinations
+    n_possible_combinations = int(len(chunks) * (len(chunks) - 1) / 2)
+
+    # Keep track of the number of combinations that have been yielded
+    ix = 0
+    # Keep track of the time it takes to yield successive combinations
+    start_time = time.time()
+
+    for chunk_1_ix in range(len(chunks)):
+        for chunk_2_ix in range(chunk_1_ix + 1, len(chunks)):
+            yield (chunks[chunk_1_ix], chunks[chunk_2_ix], metric, max_dist)
+            ix += 1
+            if ix % 1000 == 0:
+                logging.info("Analyzed {:,} / {:,} combinations ({:,} seconds elapsed)".format(
+                    ix, n_possible_combinations, 
+                    round(time.time() - start_time, 2)
+                ))
+                start_time = time.time()
+
+    logging.info("Analyzed {:,} / {:,} combinations ({:,} seconds elapsed)".format(
+        ix, n_possible_combinations, 
+        round(time.time() - start_time, 2)
+    ))
+
+
+def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000):
     gene_names = df.index.values
     # Break up the DataFrame into chunks
     chunks = [
@@ -153,30 +181,23 @@ def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000, thread
         for n in range(0, df.shape[0], chunk_size)
     ]
 
-    connections = []
-    
-    for ix, d1 in enumerate(chunks):
-        start_time = time.time()
-        connections.extend(p.map(
-            find_pairwise_connections_worker, 
-            [
-                (d1, d2, metric, max_dist)
-                for d2 in chunks
-            ]
-        ))
-        logging.info("Processed {:,} / {:,} connections ({:,} seconds elapsed)".format(
-            ix + 1,
-            len(chunks),
-            round(time.time() - start_time, 2)
-        ))
+    logging.info("Made {:,} groups of {:,} genes each".format(
+        len(chunks), chunk_size
+    ))
 
-
-    # Collapse the list
-    connections = [
+    connections = [    
         c
-        for conn in connections
+        for conn in p.imap_unordered(
+            find_pairwise_connections_worker,
+            generate_combinations(chunks, metric, max_dist)
+        )
         for c in conn
     ]
+
+    logging.info("Number of connections below the threshold: {:,}".format(
+        len(connections)
+    ))
+    logging.info("Getting the list of singletons")
 
     # Calculate which genes are singletons with no connections
     singletons = set(gene_names) - set(
@@ -363,6 +384,7 @@ def find_cags(
         exit_and_clean_up(temp_folder)
 
     # Make a pool of workers
+    logging.info("Making a pool of {} workers".format(threads))
     p = Pool(threads)
 
     # Make the abundance DataFrame
@@ -409,7 +431,6 @@ def find_cags(
             metric,
             max_dist,
             p,
-            threads=threads,
             chunk_size=chunk_size)
     except:
         exit_and_clean_up(temp_folder)
