@@ -314,16 +314,13 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             # Make the full name of the destination key
             file_prefix = prefix + output_prefix + suffix
 
-            # Open a file handle to copy the file up to S3
-            data = open(fp, 'rb')
-
             # Copy the file
             logging.info("Copying {} to {}/{}".format(
                 fp,
                 bucket,
                 file_prefix
             ))
-            s3.Bucket(bucket).put_object(Key=file_prefix, Body=data)
+            s3.Bucket(bucket).upload_file(fp, file_prefix)
 
 
         else:
