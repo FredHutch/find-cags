@@ -293,6 +293,10 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
         (".cags.json.gz", cags),
         (".logs.txt", log_fp)
     ]:
+        if obj is None:
+            "Skipping {}{}, no data available".format(output_prefix, suffix)
+            continue
+
         fp = os.path.join(temp_folder, output_prefix + suffix)
         if suffix.endswith(".feather"):
             obj.reset_index().to_feather(fp)
@@ -442,12 +446,16 @@ def find_cags(
         exit_and_clean_up(temp_folder)
     logging.info("Found {:,} CAGs".format(len(cags)))
 
-    # Make a DataFrame summarizing the CAG and singleton abundances
-    logging.info("Making summary DataFrame")
-    try:
-        summary_df = make_summary_abund_df(df, cags, singletons)
-    except:
-        exit_and_clean_up(temp_folder)
+    # If any CAGs were found, make a summary DataFrame for those CAGs
+    if len(cags) > 0:
+        # Make a DataFrame summarizing the CAG and singleton abundances
+        logging.info("Making summary DataFrame")
+        try:
+            summary_df = make_summary_abund_df(df, cags, singletons)
+        except:
+            exit_and_clean_up(temp_folder)
+    else:
+        summary_df = None
 
     # Read in the logs
     logs = "\n".join(open(log_fp, "rt").readlines())

@@ -17,7 +17,6 @@
 
   # Make sure the output files exist
   [[ -s /usr/local/tests/test.feather ]]
-  [[ -s /usr/local/tests/test.cags.feather ]]
   [[ -s /usr/local/tests/test.cags.json.gz ]]
   [[ -s /usr/local/tests/test.logs.txt ]]
 }
