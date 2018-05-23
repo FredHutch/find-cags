@@ -271,13 +271,7 @@ def make_summary_abund_df(df, cags, singletons):
         for cag_ix, cag in cags.items()
     }).T
 
-    # Add in the singletons
-    summary_df = pd.concat([
-        summary_df,
-        df.loc[singletons]
-    ])
-
-    assert summary_df.shape[0] == len(cags) + len(singletons)
+    assert summary_df.shape[0] == len(cags)
     assert summary_df.shape[1] == df.shape[1]
 
     return summary_df
