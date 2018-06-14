@@ -201,13 +201,13 @@ def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000):
     logging.info("Getting the list of singletons")
 
     # Calculate which genes are singletons with no connections
-    singletons = set(gene_names) - set(
+    singletons = list(set(gene_names) - set(
         [
             gene_id
             for connection in connections
             for gene_id in connection
         ]
-    )
+    ))
     return connections, singletons
 
 
