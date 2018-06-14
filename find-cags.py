@@ -422,10 +422,10 @@ def find_cags(
             round(time.time() - start_time, 2)
         ))
 
-    # If this is being run in testing mode, subset to 1,000 genes
+    # If this is being run in testing mode, subset to 2,000 genes
     if test:
-        logging.info("Running in testing mode, subset to 1,000 genes")
-        df = df.head(1000)
+        logging.info("Running in testing mode, subset to 2,000 genes")
+        df = df.head(2000)
 
     # Make a DataFrame that will be condensed into CAGs as we go
     summary_df = df.copy()
