@@ -347,6 +347,7 @@ def find_cags(
     gene_id_key="id",
     threads=1,
     min_samples=1,
+    iterations=1,
     test=False,
     chunk_size=1000,
 ):
@@ -373,6 +374,10 @@ def find_cags(
     consoleHandler = logging.StreamHandler()
     consoleHandler.setFormatter(logFormatter)
     rootLogger.addHandler(consoleHandler)
+
+    assert isinstance(iterations, int)
+    assert iterations >= 1
+    assert iterations <= 999, "Don't iterate > 999 times"
 
     # Read in the sample_sheet
     logging.info("Reading in the sample sheet from " + sample_sheet)
@@ -421,41 +426,93 @@ def find_cags(
         logging.info("Running in testing mode, subset to 1,000 genes")
         df = df.head(1000)
 
+    # Make a DataFrame that will be condensed into CAGs as we go
+    summary_df = df.copy()
+
+    # Keep track of the CAGs at each iteration
+    all_cags = []
+
     # Get the pairwise distances under the threshold
-    logging.info("Finding pairwise connections with {} <= {}".format(metric, max_dist))
-    try:
-        connections, singletons = find_pairwise_connections(
-            df,
+    for iteration_ix in range(iterations):
+        logging.info("Iteration {}: Finding pairwise connections with {} <= {}".format(
+            iteration_ix + 1,
             metric,
-            max_dist,
-            p,
-            chunk_size=chunk_size)
-    except:
-        exit_and_clean_up(temp_folder)
-
-    logging.info("Found {:,} pairwise connections, and {:,} singletons".format(
-        len(connections),
-        len(singletons)
-    ))
-
-    # Make the CAGs with single-linkage clustering
-    logging.info("Making CAGs from {:,} pairwise connections".format(len(connections)))
-    try:
-        cags = single_linkage_clustering(connections)
-    except:
-        exit_and_clean_up(temp_folder)
-    logging.info("Found {:,} CAGs".format(len(cags)))
-
-    # If any CAGs were found, make a summary DataFrame for those CAGs
-    if len(cags) > 0:
-        # Make a DataFrame summarizing the CAG and singleton abundances
-        logging.info("Making summary DataFrame")
+            max_dist
+        ))
         try:
-            summary_df = make_summary_abund_df(df, cags, singletons)
+            connections, singletons = find_pairwise_connections(
+                summary_df,
+                metric,
+                max_dist,
+                p,
+                chunk_size=chunk_size)
         except:
             exit_and_clean_up(temp_folder)
-    else:
-        summary_df = None
+
+        logging.info("Found {:,} pairwise connections, and {:,} singletons".format(
+            len(connections),
+            len(singletons)
+        ))
+
+        # Make the CAGs with single-linkage clustering
+        logging.info("Making CAGs from {:,} pairwise connections".format(len(connections)))
+        try:
+            cags = single_linkage_clustering(connections)
+        except:
+            exit_and_clean_up(temp_folder)
+        logging.info("Found {:,} CAGs".format(len(cags)))
+
+        # Keep track of this set of CAGs
+        all_cags.append(cags)
+
+        # Combine all CAGs in the `summary_df`
+        if len(cags) > 0:
+            # Make a DataFrame summarizing the CAG and singleton abundances
+            logging.info("Combining CAGs")
+            try:
+                summary_df = make_summary_abund_df(summary_df, cags, singletons)
+            except:
+                exit_and_clean_up(temp_folder)
+        else:
+            # No CAGs were found, so stop iterating
+            logging.info("No CAGs found, stopping iterations")
+            break
+
+    # Make a set with all of the gene IDs in the input
+    all_genes = set(df.index.values)
+
+    # Make a single dict with the CAGs grouped across all iterations
+    while len(all_cags) > 1:
+        # The first set of CAGs should entirely contain IDs from the input DataFrame
+        assert all([
+            gene_id in all_genes
+            for cag_id, cag_members in all_cags[0].items()
+            for gene_id in cag_members
+        ])
+
+        # Now replace the IDs from the second iteration with the names from the first
+        all_cags[1] = {
+            cag_id: [
+                gene_id
+                for cag_member in cag_members
+                for gene_id in all_cags[0].get(cag_member, [cag_member])                
+            ]
+            for cag_id, cag_members in all_cags[1].items()
+        }
+
+        # Remove the first set of CAGs from the front of the list
+        all_cags = all_cags[1:]
+
+    # Get the singletons that aren't in any of the CAGs
+    genes_in_cags = set([
+        gene_id
+        for cag_members in all_cags[0].values()
+        for gene_id in cag_members
+    ])
+    singletons = list(all_genes - genes_in_cags)
+
+    # Now make a summary DF with the mean value for each combined CAG
+    summary_df = make_summary_abund_df(df, all_cags[0], singletons)
 
     # Read in the logs
     logs = "\n".join(open(log_fp, "rt").readlines())
@@ -530,6 +587,10 @@ if __name__ == "__main__":
                         type=int,
                         default=1,
                         help="Filter genes by the number of samples they are found in.")
+    parser.add_argument("--iterations",
+                        type=int,
+                        default=1,
+                        help="Iteratively combine genes to form CAGs (default: 1).")
     parser.add_argument("--test",
                         action="store_true",
                         help="Run in testing mode and only process a subset of 1,000 genes.")
