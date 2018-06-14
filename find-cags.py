@@ -141,7 +141,7 @@ def find_pairwise_connections_worker(input_data):
         (name1, name2)
         for ix1, name1 in enumerate(df1_index)
         for ix2, name2 in enumerate(df2_index)
-        if d[ix1, ix2] <= max_dist
+        if d[ix1, ix2] <= max_dist and name1 != name2
     ]
 
 
@@ -149,7 +149,7 @@ def generate_combinations(chunks, metric, max_dist):
     """Iteratively yield all pairwise combinations of these chunks."""
 
     # Calculate the total number of combinations
-    n_possible_combinations = int(len(chunks) * (len(chunks) - 1) / 2)
+    n_possible_combinations = int(len(chunks) * (len(chunks) + 1) / 2)
 
     # Keep track of the number of combinations that have been yielded
     ix = 0
@@ -157,7 +157,7 @@ def generate_combinations(chunks, metric, max_dist):
     start_time = time.time()
 
     for chunk_1_ix in range(len(chunks)):
-        for chunk_2_ix in range(chunk_1_ix + 1, len(chunks)):
+        for chunk_2_ix in range(chunk_1_ix, len(chunks)):
             yield (chunks[chunk_1_ix], chunks[chunk_2_ix], metric, max_dist)
             ix += 1
             if ix % 1000 == 0:
