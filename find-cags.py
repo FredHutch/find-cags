@@ -12,6 +12,7 @@ import shutil
 import logging
 import argparse
 import traceback
+import numpy as np
 import pandas as pd
 from multiprocessing import Pool
 from collections import defaultdict
@@ -105,7 +106,7 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
 
         # Format as a Series
         sample_dat = pd.Series({
-            d[gene_id_key]: d[abundance_key]
+            d[gene_id_key]: np.float16(d[abundance_key])
             for d in sample_dat
         })
 
@@ -119,7 +120,7 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
         dat[sample_name] = sample_dat
 
     logging.info("Formatting as a DataFrame")
-    dat = pd.DataFrame(dat).fillna(0)
+    dat = pd.DataFrame(dat).fillna(np.float16(0))
 
     logging.info("Read in data for {:,} genes across {:,} samples".format(
         dat.shape[0],
