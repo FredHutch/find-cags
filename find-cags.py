@@ -271,7 +271,7 @@ def make_summary_abund_df(df, cags, singletons):
             cag_ix: df.loc[cag].mean()
             for cag_ix, cag in cags.items()
         }).T,
-        cags.loc[singletons]
+        df.loc[singletons]
     ])
 
     assert summary_df.shape[0] == len(cags) + len(singletons)
