@@ -265,13 +265,16 @@ def single_linkage_clustering(connections):
 
 
 def make_summary_abund_df(df, cags, singletons):
-    """Make a DataFrame with the average value for each CAG."""
-    summary_df = pd.DataFrame({
-        cag_ix: df.loc[cag].mean()
-        for cag_ix, cag in cags.items()
-    }).T
+    """Make a DataFrame with the average value for each CAG, as well as the singletons."""
+    summary_df = pd.concat([
+        pd.DataFrame({
+            cag_ix: df.loc[cag].mean()
+            for cag_ix, cag in cags.items()
+        }).T,
+        cags.loc[singletons]
+    ])
 
-    assert summary_df.shape[0] == len(cags)
+    assert summary_df.shape[0] == len(cags) + len(singletons)
     assert summary_df.shape[1] == df.shape[1]
 
     return summary_df
