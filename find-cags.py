@@ -501,6 +501,11 @@ def find_cags(
             for cag_id, cag_members in all_cags[1].items()
         }
 
+        # Add the CAGs that weren't grouped any further in that next iteration
+        for cag_id, cag_members in all_cags[0].items():
+            if any([cag_id in x for x in all_cags[1].values()]) is False:
+                all_cags[1][cag_id] = cag_members
+
         # Remove the first set of CAGs from the front of the list
         all_cags = all_cags[1:]
 
@@ -512,6 +517,15 @@ def find_cags(
     ])
     singletons = list(all_genes - genes_in_cags)
 
+    logging.info("Number of genes in CAGs: {:,} / {:,}".format(
+        len(genes_in_cags),
+        len(all_genes)
+    ))
+
+    logging.info("Number of CAGs: {:,}".format(len(all_cags[0])))
+
+    assert len(singletons) == len(all_genes) - len(genes_in_cags)
+
     # Now make a summary DF with the mean value for each combined CAG
     summary_df = make_summary_abund_df(df, all_cags[0], singletons)
 
@@ -521,7 +535,8 @@ def find_cags(
     # Return the results
     logging.info("Returning results to " + output_folder)
     try:
-        return_results(df, summary_df, cags, logs, output_prefix, output_folder, temp_folder)
+        return_results(
+            df, summary_df, all_cags[0], logs, output_prefix, output_folder, temp_folder)
     except:
         exit_and_clean_up(temp_folder)
 
