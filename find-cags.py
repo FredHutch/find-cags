@@ -468,18 +468,22 @@ def find_cags(
         except:
             exit_and_clean_up(temp_folder)
 
-        logging.info("Found {:,} pairwise connections, and {:,} singletons".format(
+        logging.info("Iteration {}: Found {:,} pairwise connections, and {:,} singletons".format(
+            iteration_ix + 1,
             len(connections),
             len(singletons)
         ))
 
         # Make the CAGs with single-linkage clustering
-        logging.info("Making CAGs from {:,} pairwise connections".format(len(connections)))
+        logging.info("Iteration {}: Making CAGs from {:,} pairwise connections".format(
+            iteration_ix + 1,
+            len(connections)))
         try:
             cags = single_linkage_clustering(connections)
         except:
             exit_and_clean_up(temp_folder)
-        logging.info("Found {:,} CAGs".format(len(cags)))
+        logging.info("Iteration {}: Found {:,} CAGs".format(
+            iteration_ix + 1, len(cags)))
 
         # Keep track of this set of CAGs
         all_cags.append(cags)
