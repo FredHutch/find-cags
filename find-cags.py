@@ -81,11 +81,14 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
 
     # Normalize each sample's data
     if normalization is not None:
-        assert normalization in ["median", "sum"]
+        assert normalization in ["median", "sum", "clr"]
         logging.info("Normalizing the abundance values by " + normalization)
 
     # Collect all of the abundance information in this single dict
     dat = {}
+
+    # Keep track of the lowest value across all samples
+    lowest_value = None
 
     # Iterate over each sample
     for sample_name, sample_path in sample_sheet.items():
@@ -115,12 +118,27 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
             sample_dat = sample_dat / sample_dat.median()
         elif normalization == "sum":
             sample_dat = sample_dat / sample_dat.sum()
+        elif normalization == "clr":
+            sample_dat = (
+                sample_dat / sample_dat.mean()
+            ).apply(np.log10).apply(np.float16)
+
+        # Keep track of the lowest value across all samples
+        if lowest_value is None:
+            lowest_value = sample_dat.min()
+        else:
+            lowest_value = np.min([lowest_value, sample_dat.min()])
 
         # Add the data to the total
         dat[sample_name] = sample_dat
 
     logging.info("Formatting as a DataFrame")
-    dat = pd.DataFrame(dat).fillna(np.float16(0))
+    if normalization in ["median", "sum"]:
+        dat = pd.DataFrame(dat).fillna(np.float16(0))
+    else:
+        assert normalization == "clr"
+        assert lowest_value is not None
+        dat = pd.DataFrame(dat).fillna(lowest_value)
 
     logging.info("Read in data for {:,} genes across {:,} samples".format(
         dat.shape[0],
@@ -570,7 +588,7 @@ if __name__ == "__main__":
     parser.add_argument("--normalization",
                         type=str,
                         default=None,
-                        help="Normalization factor per-sample (median or sum).")
+                        help="Normalization factor per-sample (median, sum, or clr).")
     parser.add_argument("--max-dist",
                         type=float,
                         default=0.01,
@@ -617,7 +635,7 @@ if __name__ == "__main__":
     assert args.sample_sheet.endswith((".json", ".json.gz"))
 
     # Normalization factor is absent, 'median', or 'sum'
-    assert args.normalization in [None, "median", "sum"]
+    assert args.normalization in [None, "median", "sum", "clr"]
 
     # max-dist is >=0
     assert args.max_dist >= 0
@@ -627,7 +645,7 @@ if __name__ == "__main__":
     assert args.min_samples >= 1
 
     # Make sure the temporary folder exists
-    assert os.path.exists(args.temp_folder)
+    assert os.path.exists(args.temp_folder), args.temp_folder
 
     find_cags(
         **args.__dict__
