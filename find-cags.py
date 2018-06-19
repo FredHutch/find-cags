@@ -17,6 +17,7 @@ import pandas as pd
 from multiprocessing import Pool
 from collections import defaultdict
 from scipy.spatial.distance import cdist
+from scipy.stats import gmean
 
 
 def exit_and_clean_up(temp_folder):
@@ -120,7 +121,7 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
             sample_dat = sample_dat / sample_dat.sum()
         elif normalization == "clr":
             sample_dat = (
-                sample_dat / sample_dat.mean()
+                sample_dat / gmean(sample_dat)
             ).apply(np.log10).apply(np.float16)
 
         # Keep track of the lowest value across all samples
