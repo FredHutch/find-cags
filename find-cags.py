@@ -230,7 +230,7 @@ def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000):
     return connections, singletons
 
 
-def single_linkage_clustering(connections):
+def single_linkage_clustering(connections, iteration_ix):
     gene_clusters = {}
     next_cluster_id = 0
 
@@ -279,7 +279,7 @@ def single_linkage_clustering(connections):
 
     # Return a dict of lists (numbering from 0)
     return {
-        "cag_{}".format(ix): list(s)
+        "iteration_{}_cag_{}".format(iteration_ix, ix): list(s)
         for ix, s in enumerate(cags.values())
     }
 
