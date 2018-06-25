@@ -286,6 +286,8 @@ def single_linkage_clustering(connections):
 
 def make_summary_abund_df(df, cags, singletons):
     """Make a DataFrame with the average value for each CAG, as well as the singletons."""
+    assert len(set(cags.keys()) & set(df.index.values)) == 0, "Collision between protein/CAG names"
+
     summary_df = pd.concat([
         pd.DataFrame({
             cag_ix: df.loc[cag].mean()
@@ -480,7 +482,7 @@ def find_cags(
             iteration_ix + 1,
             len(connections)))
         try:
-            cags = single_linkage_clustering(connections)
+            cags = single_linkage_clustering(connections, iteration_ix)
         except:
             exit_and_clean_up(temp_folder)
         logging.info("Iteration {}: Found {:,} CAGs".format(
