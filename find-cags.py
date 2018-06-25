@@ -134,10 +134,10 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
         dat[sample_name] = sample_dat
 
     logging.info("Formatting as a DataFrame")
-    if normalization in ["median", "sum"]:
+    if normalization in ["median", "sum"] or normalization is None:
         dat = pd.DataFrame(dat).fillna(np.float16(0))
     else:
-        assert normalization == "clr"
+        assert normalization == "clr", normalization
         assert lowest_value is not None
         dat = pd.DataFrame(dat).fillna(lowest_value)
 
