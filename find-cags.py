@@ -158,7 +158,7 @@ def find_pairwise_connections_worker(input_data):
     d = cdist(df1, df2, metric=metric)
 
     return [
-        (name1, name2)
+        (name1, name2, d[ix1, ix2])
         for ix1, name1 in enumerate(df1_index)
         for ix2, name2 in enumerate(df2_index)
         if d[ix1, ix2] <= max_dist and name1 != name2
@@ -222,55 +222,66 @@ def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000):
     # Calculate which genes are singletons with no connections
     singletons = list(set(gene_names) - set(
         [
-            gene_id
+            connection[0]
             for connection in connections
-            for gene_id in connection
+        ] + [
+            connection[1]
+            for connection in connections
         ]
     ))
     return connections, singletons
 
 
-def single_linkage_clustering(connections, iteration_ix):
+def best_cluster(gene_id, linkages, genes_in_clusters):
+    """Find the best cluster for this gene"""
+    cluster = [gene_id]
+    
+    # Iterate over each of the other genes, starting with the most similar
+    linked_genes = sorted(
+        list(linkages[gene_id].keys()),
+        key=linkages[gene_id].get
+    )
+
+    # If each gene is completely linked, add it to the cluster
+    for neighbor_gene in linked_genes:
+        if all([
+            g1 in linkages[neighbor_gene]
+            for g1 in cluster
+        ]):
+            cluster.append(neighbor_gene)
+    
+    return cluster
+
+
+def complete_linkage_clustering(connections, iteration_ix):
+
+    # Format the connections as a dict of dicts
+    linkages =  defaultdict(dict)
+    for g1, g2, d in connections:
+        linkages[g1][g2] = d
+        linkages[g2][g1] = d
+
+    # Now go through and make the clusters
     gene_clusters = {}
+    genes_in_clusters = set()
     next_cluster_id = 0
 
-    for g1, g2 in connections:
-        if g1 in gene_clusters:
-            if g2 in gene_clusters:
-                # Already part of the same cluster
-                if gene_clusters[g1] == gene_clusters[g2]:
-                    pass
+    # Iterate over each gene
+    for gene_id in linkages.keys():
+        # Skip the gene if it's already in a cluster
+        if gene_id in gene_clusters:
+            continue
+        
+        # Find the genes that form the best cluster with this gene
+        genes_to_combine = best_cluster(gene_id, linkages, genes_in_clusters)
+        assert gene_id in genes_to_combine
 
-                # Need to combine two clusters
-                else:
-                    genes_to_combine = [
-                        gene_id
-                        for gene_id, cluster_id in gene_clusters.items()
-                        if cluster_id in [gene_clusters[g1], gene_clusters[g2]]
-                    ]
-                    for gene_id in genes_to_combine:
-                        gene_clusters[gene_id] = next_cluster_id
-                    # Increment the cluster counter
-                    next_cluster_id += 1
+        for gene_id in genes_to_combine:
+            genes_in_clusters.add(gene_id)
+            gene_clusters[gene_id] = next_cluster_id
 
-            # Add g2 to the cluster for g1
-            else:
-                gene_clusters[g2] = gene_clusters[g1]
-
-        # g1 is not part of any cluster
-        else:
-
-            # g2 is already in a cluster
-            if g2 in gene_clusters:
-                # Assign g1 to the cluster for g1
-                gene_clusters[g1] = gene_clusters[g2]
-            
-            # Neither gene is in a cluster yet
-            else:
-                gene_clusters[g1] = next_cluster_id
-                gene_clusters[g2] = next_cluster_id
-                # Increment the cluster counter
-                next_cluster_id += 1
+        # Increment the cluster counter
+        next_cluster_id += 1
 
     # Reformat the clusters as a dict of sets
     cags = defaultdict(set)
@@ -482,7 +493,8 @@ def find_cags(
             iteration_ix + 1,
             len(connections)))
         try:
-            cags = single_linkage_clustering(connections, iteration_ix)
+            # Returns a dict of lists
+            cags = complete_linkage_clustering(connections, iteration_ix)
         except:
             exit_and_clean_up(temp_folder)
         logging.info("Iteration {}: Found {:,} CAGs".format(
@@ -512,7 +524,7 @@ def find_cags(
         # The first set of CAGs should entirely contain IDs from the input DataFrame
         assert all([
             gene_id in all_genes
-            for cag_id, cag_members in all_cags[0].items()
+            for cag_members in all_cags[0].values()
             for gene_id in cag_members
         ])
 
