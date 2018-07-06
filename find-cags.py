@@ -250,7 +250,13 @@ def make_cags_with_ann(
     logging.info("Making optimized CAGs")
     all_cags = {}
     didnt_find_self = 0
+    start_time = time.time()
     for gene_ix, gene_name in enumerate(df.index.values):
+        if time.time() - start_time > 30:
+            print("Processed {:,} / {:,} genes".format(
+                gene_ix, df.shape[0]
+            ))
+            start_time = time.time()
 
         gene_neighbors = [
             df.index.values[ix]

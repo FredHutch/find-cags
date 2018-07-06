@@ -27,3 +27,15 @@
 2018-07-06 11:08:16,549 INFO     [find-cags] Set HNSW query-time parameters:
 2018-07-06 11:08:16,549 INFO     [find-cags] ef(Search)         =20
 2018-07-06 11:08:16,549 INFO     [find-cags] algoType           =2
+2018-07-06 11:29:18,939 INFO     [find-cags] 
+The vectorspace is Cosine Similarity
+2018-07-06 11:29:18,955 INFO     [find-cags] Vector length=9
+2018-07-06 11:29:18,955 INFO     [find-cags] Thus using function with any base
+2018-07-06 11:29:18,955 INFO     [find-cags] Search method 4 is not allowed in this case
+2018-07-06 11:29:18,955 INFO     [find-cags] searchMethod			  = 3
+2018-07-06 11:29:19,733 INFO     [find-cags] Making optimized index
+2018-07-06 11:29:23,906 INFO     [find-cags] Finished making optimized index
+2018-07-06 11:29:23,906 INFO     [find-cags] Maximum level = 2
+2018-07-06 11:29:23,906 INFO     [find-cags] Total memory allocated for optimized index+data: 718 Mb
+2018-07-06 11:29:23,915 INFO     [find-cags] Starting with the closest 100 neighbors for all genes
+2018-07-06 11:30:35,215 INFO     [find-cags] Making optimized CAGs
