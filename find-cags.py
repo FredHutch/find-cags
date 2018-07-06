@@ -414,8 +414,8 @@ def find_cags(
 
     # If this is being run in testing mode, subset to 2,000 genes
     if test:
-        logging.info("Running in testing mode, subset to 50,000 genes")
-        df = df.head(50000)
+        logging.info("Running in testing mode, subset to 2,000 genes")
+        df = df.head(2000)
 
     # Make the nmslib index
     index = make_nmslib_index(df)
@@ -520,7 +520,7 @@ if __name__ == "__main__":
                         help="Filter genes by the number of samples they are found in.")
     parser.add_argument("--test",
                         action="store_true",
-                        help="Run in testing mode and only process a subset of 20,000 genes.")
+                        help="Run in testing mode and only process a subset of 2,000 genes.")
 
     args = parser.parse_args(sys.argv[1:])
 
