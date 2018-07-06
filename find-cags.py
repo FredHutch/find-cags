@@ -228,7 +228,7 @@ def make_nmslib_index(df, n_trees=100):
     logging.info("Adding {:,} genes to the nmslib index".format(df.shape[0]))
     index.addDataPointBatch(df.values)
     logging.info("Making the index")
-    index.createIndex({'post': 2, "M": 200}, print_progress=False)
+    index.createIndex({'post': 2, "M": 100}, print_progress=False)
 
     return index
 
