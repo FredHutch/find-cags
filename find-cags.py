@@ -15,9 +15,7 @@ import argparse
 import traceback
 import numpy as np
 import pandas as pd
-from multiprocessing import Pool
 from collections import defaultdict
-from scipy.spatial.distance import cdist
 from scipy.stats import gmean
 
 
@@ -336,7 +334,6 @@ def find_cags(
     sample_sheet=None,
     output_prefix=None,
     output_folder=None,
-    metric="euclidean",
     normalization=None,
     max_dist=0.1,
     temp_folder="/scratch",
@@ -345,9 +342,7 @@ def find_cags(
     gene_id_key="id",
     threads=1,
     min_samples=1,
-    iterations=1,
-    test=False,
-    chunk_size=1000
+    test=False
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -489,10 +484,6 @@ if __name__ == "__main__":
                         required=True,
                         help="""Folder to place results.
                                 (Supported: s3://, or local path).""")
-    parser.add_argument("--metric",
-                        type=str,
-                        default="angular",
-                        help="Distance metric calculation method, see nmslib.")
     parser.add_argument("--normalization",
                         type=str,
                         default=None,
@@ -500,7 +491,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-dist",
                         type=float,
                         default=0.01,
-                        help="Maximum distance for single-linkage clustering.")
+                        help="Maximum cosine distance for clustering.")
     parser.add_argument("--temp-folder",
                         type=str,
                         default="/scratch",
@@ -521,17 +512,13 @@ if __name__ == "__main__":
                         type=int,
                         default=1,
                         help="Number of threads to use.")
-    parser.add_argument("--chunk-size",
-                        type=int,
-                        default=100000,
-                        help="Size of chunks to break abundance table into.")
     parser.add_argument("--min-samples",
                         type=int,
                         default=1,
                         help="Filter genes by the number of samples they are found in.")
     parser.add_argument("--test",
                         action="store_true",
-                        help="Run in testing mode and only process a subset of 1,000 genes.")
+                        help="Run in testing mode and only process a subset of 20,000 genes.")
 
     args = parser.parse_args(sys.argv[1:])
 
