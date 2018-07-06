@@ -220,7 +220,7 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
-def make_nmslib_index(df, n_trees=100):
+def make_nmslib_index(df):
     """Make the HNSW index"""
     logging.info("Making the HNSW index")
     index = nmslib.init(method='hnsw', space='cosinesimil')
@@ -228,7 +228,7 @@ def make_nmslib_index(df, n_trees=100):
     logging.info("Adding {:,} genes to the nmslib index".format(df.shape[0]))
     index.addDataPointBatch(df.values)
     logging.info("Making the index")
-    index.createIndex({'post': 2, "M": 100}, print_progress=False)
+    index.createIndex({'post': 2, "M": 200}, print_progress=False)
 
     return index
 
@@ -242,7 +242,7 @@ def make_cags_with_ann(
     """Make CAGs using the approximate nearest neighbor"""
 
     # Get the nearest neighbors for every gene
-    starting_n_neighbors=100
+    starting_n_neighbors=1000
     logging.info("Starting with the closest {:,} neighbors for all genes".format(starting_n_neighbors))
     nearest_neighbors = index.knnQueryBatch(df.values, k=starting_n_neighbors, num_threads=threads)
 
