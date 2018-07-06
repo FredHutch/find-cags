@@ -314,7 +314,8 @@ def make_cags_with_ann(
     metric,
     max_dist,
     n_genes,
-    n_samples
+    n_samples,
+    gene_names
 ):
     """Make CAGs using the approximate nearest neighbor"""
     logging.info("Loading the annoy index from " + annoy_index_fp)
@@ -324,7 +325,34 @@ def make_cags_with_ann(
     # Make a set with all of the genes that need to be clustered
     to_cluster = set(list(range(n_genes)))
 
-    get_single_cag(annoy_index_fp, 4, n_samples, metric, max_dist)
+    # Store the CAGs as a dict of lists
+    cag_ix = 0
+    cags = {}
+
+    start_time = time.time()
+
+    while len(to_cluster) > 0:
+        if time.time() - start_time > 10:
+            logging.info("Genes remaining to be clustered: {:,}".format(len(to_cluster)))
+        # Get a single random gene index
+        gene_ix = to_cluster.pop()
+        to_cluster.add(gene_ix)
+
+        # Get the genes linked to this one
+        new_cag = get_single_cag(annoy_index_fp, gene_ix, n_samples, metric, max_dist)
+        # Filter to those genes which haven't been clustered yet
+        new_cag = list(set(new_cag) & to_cluster)
+        # Add this to the running list
+        cags["cag_{}".format(cag_ix)] = [
+            gene_names[ix]
+            for ix in new_cag
+        ]
+        cag_ix += 1
+
+        # Now remove this set of genes from the list that needs to be clustered
+        to_cluster -= set(new_cag)
+
+    return cags
 
 
 def find_cags(
@@ -424,7 +452,14 @@ def find_cags(
     make_annoy_index(df, annoy_index_fp, metric)
 
     # Make CAGs using the approximate nearest neighbor
-    cags = make_cags_with_ann(annoy_index_fp, metric, max_dist, df.shape[0], df.shape[1])
+    cags = make_cags_with_ann(
+        annoy_index_fp,
+        metric,
+        max_dist,
+        df.shape[0],
+        df.shape[1],
+        df.index.values
+    )
 
     # Get the singletons that aren't in any of the CAGs
     genes_in_cags = set([
