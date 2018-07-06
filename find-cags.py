@@ -222,7 +222,7 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
-def make_annoy_index(df, annoy_index_fp, metric, n_trees=10):
+def make_annoy_index(df, metric, n_trees=100):
     """Make the annoy index"""
     logging.info("Making the annoy index")
     index_handle = AnnoyIndex(df.shape[1], metric=metric)
@@ -235,11 +235,11 @@ def make_annoy_index(df, annoy_index_fp, metric, n_trees=10):
         index_handle.add_item(gene_ix, df.iloc[gene_ix].values)
     logging.info("Building trees in the index")
     index_handle.build(n_trees)
-    logging.info("Saving the index to " + annoy_index_fp)
-    index_handle.save(annoy_index_fp)
+    return index_handle
 
 
-def get_single_cag(annoy_index_fp,
+def get_single_cag(
+    index_handle,
     gene_ix,
     n_samples,
     metric,
@@ -248,8 +248,6 @@ def get_single_cag(annoy_index_fp,
     max_recursion_depth=10
 ):
     """Get the CAGs for a single gene. This will always return a set including gene_ix"""
-    index_handle = AnnoyIndex(n_samples, metric=metric)
-    index_handle.load(annoy_index_fp)
 
     n_neighbors_to_check = 10
     neighbors = index_handle.get_nns_by_item(
@@ -272,6 +270,12 @@ def get_single_cag(annoy_index_fp,
         for ix, d in zip(neighbors[0], neighbors[1])
         if d < max_dist
     ]
+    if gene_ix not in neighbors:
+        neighbors.append(gene_ix)
+
+    # No neighbors were found
+    if len(neighbors) == 1:
+        return [gene_ix]
 
     # Make a distance matrix
     dm = pd.DataFrame({
@@ -281,7 +285,7 @@ def get_single_cag(annoy_index_fp,
         }
         for ix_1 in neighbors
     })
-
+    
     # Pick a centroid as the gene with the lowest median distance
     centroid = dm.median().sort_values().index.values[0]
 
@@ -295,7 +299,7 @@ def get_single_cag(annoy_index_fp,
 
     # Otherwise, pick the CAGs based on this new centroid
     new_neighbors = get_single_cag(
-        annoy_index_fp,
+        index_handle,
         centroid,
         n_samples,
         metric,
@@ -310,7 +314,7 @@ def get_single_cag(annoy_index_fp,
     
 
 def make_cags_with_ann(
-    annoy_index_fp, 
+    index_handle,
     metric,
     max_dist,
     n_genes,
@@ -318,9 +322,6 @@ def make_cags_with_ann(
     gene_names
 ):
     """Make CAGs using the approximate nearest neighbor"""
-    logging.info("Loading the annoy index from " + annoy_index_fp)
-    index_handle = AnnoyIndex(n_samples, metric=metric)
-    index_handle.load(annoy_index_fp)
 
     # Make a set with all of the genes that need to be clustered
     to_cluster = set(list(range(n_genes)))
@@ -333,24 +334,29 @@ def make_cags_with_ann(
 
     while len(to_cluster) > 0:
         if time.time() - start_time > 10:
-            logging.info("Genes remaining to be clustered: {:,}".format(len(to_cluster)))
+            logging.info("Number of CAGs: {:,} -- Genes remaining to be clustered: {:,}".format(
+                len(cags), len(to_cluster)
+            ))
+            start_time = time.time()
         # Get a single random gene index
         gene_ix = to_cluster.pop()
         to_cluster.add(gene_ix)
 
         # Get the genes linked to this one
-        new_cag = get_single_cag(annoy_index_fp, gene_ix, n_samples, metric, max_dist)
+        new_cag = get_single_cag(index_handle, gene_ix, n_samples, metric, max_dist)
         # Filter to those genes which haven't been clustered yet
         new_cag = list(set(new_cag) & to_cluster)
-        # Add this to the running list
-        cags["cag_{}".format(cag_ix)] = [
-            gene_names[ix]
-            for ix in new_cag
-        ]
-        cag_ix += 1
 
         # Now remove this set of genes from the list that needs to be clustered
         to_cluster -= set(new_cag)
+
+        # Add CAGs with >1 member to the running list
+        if len(new_cag) > 1:
+            cags["cag_{}".format(cag_ix)] = [
+                gene_names[ix]
+                for ix in new_cag
+            ]
+            cag_ix += 1
 
     return cags
 
@@ -370,8 +376,7 @@ def find_cags(
     min_samples=1,
     iterations=1,
     test=False,
-    chunk_size=1000,
-    annoy_index_fp="annoy.index"
+    chunk_size=1000
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -449,11 +454,11 @@ def find_cags(
         df = df.head(2000)
 
     # Make the annoy index
-    make_annoy_index(df, annoy_index_fp, metric)
+    index_handle = make_annoy_index(df, metric)
 
     # Make CAGs using the approximate nearest neighbor
     cags = make_cags_with_ann(
-        annoy_index_fp,
+        index_handle,
         metric,
         max_dist,
         df.shape[0],
@@ -464,9 +469,10 @@ def find_cags(
     # Get the singletons that aren't in any of the CAGs
     genes_in_cags = set([
         gene_id
-        for cag_members in all_cags[0].values()
+        for cag_members in cags.values()
         for gene_id in cag_members
     ])
+    all_genes = set(df.index.values)
     singletons = list(all_genes - genes_in_cags)
 
     logging.info("Number of genes in CAGs: {:,} / {:,}".format(
@@ -474,12 +480,12 @@ def find_cags(
         len(all_genes)
     ))
 
-    logging.info("Number of CAGs: {:,}".format(len(all_cags[0])))
+    logging.info("Number of CAGs: {:,}".format(len(cags)))
 
     assert len(singletons) == len(all_genes) - len(genes_in_cags)
 
     # Now make a summary DF with the mean value for each combined CAG
-    summary_df = make_summary_abund_df(df, all_cags[0], singletons)
+    summary_df = make_summary_abund_df(df, cags, singletons)
 
     # Read in the logs
     logs = "\n".join(open(log_fp, "rt").readlines())
@@ -488,7 +494,7 @@ def find_cags(
     logging.info("Returning results to " + output_folder)
     try:
         return_results(
-            df, summary_df, all_cags[0], logs, output_prefix, output_folder, temp_folder)
+            df, summary_df, cags, logs, output_prefix, output_folder, temp_folder)
     except:
         exit_and_clean_up(temp_folder)
 
