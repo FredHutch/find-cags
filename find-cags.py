@@ -226,7 +226,7 @@ def make_annoy_index(df, annoy_index_fp, metric, n_trees=10):
     """Make the annoy index"""
     logging.info("Making the annoy index")
     index_handle = AnnoyIndex(df.shape[1], metric=metric)
-    logging.info("Adding {:,} genes to the annoy index")
+    logging.info("Adding {:,} genes to the annoy index".format(df.shape[0]))
     for gene_ix in range(df.shape[0]):
         if gene_ix > 0 and gene_ix % 100000 == 0:
             logging.info("Added {:,} / {:,} genes to the index".format(
@@ -239,6 +239,64 @@ def make_annoy_index(df, annoy_index_fp, metric, n_trees=10):
     index_handle.save(annoy_index_fp)
 
 
+def get_single_cag(annoy_index_fp, gene_ix, n_samples, metric, max_dist):
+    """Get the CAGs for a single gene. This will always return a set including gene_ix"""
+    index_handle = AnnoyIndex(n_samples, metric=metric)
+    index_handle.load(annoy_index_fp)
+
+    n_neighbors_to_check = 10
+    neighbors = index_handle.get_nns_by_item(
+        gene_ix,
+        n_neighbors_to_check,
+        include_distances=True
+    )
+    # Make sure we've got all of the neighbors within the threshold
+    while neighbors[1][-1] < max_dist:
+        n_neighbors_to_check = n_neighbors_to_check * 2
+        neighbors = index_handle.get_nns_by_item(
+            gene_ix,
+            n_neighbors_to_check,
+            include_distances=True
+        )
+
+    # Now subset to those genes within the threshold
+    neighbors = [
+        ix
+        for ix, d in zip(neighbors[0], neighbors[1])
+        if d < max_dist
+    ]
+
+    # Make a distance matrix
+    dm = pd.DataFrame({
+        ix_1: {
+            ix_2: index_handle.get_distance(ix_1, ix_2)
+            for ix_2 in neighbors
+        }
+        for ix_1 in neighbors
+    })
+
+    # Pick a centroid as the gene with the lowest median distance
+    centroid = dm.median().sort_values().index.values[0]
+
+    # If the centroid is very close to the starting place, return this set
+    if index_handle.get_distance(gene_ix, centroid) < max_dist / 10:
+        return neighbors
+
+    # Otherwise, pick the CAGs based on this new centroid
+    new_neighbors = get_single_cag(
+        annoy_index_fp,
+        centroid,
+        n_samples,
+        metric,
+        max_dist
+    )
+    # If the gene_ix is in the new set of neighbors, return that
+    if gene_ix in new_neighbors:
+        return new_neighbors
+    # Otherwise, return the original set of neighbors
+    return neighbors
+    
+
 def make_cags_with_ann(
     annoy_index_fp, 
     metric,
@@ -247,7 +305,14 @@ def make_cags_with_ann(
     n_samples
 ):
     """Make CAGs using the approximate nearest neighbor"""
-    pass
+    logging.info("Loading the annoy index from " + annoy_index_fp)
+    index_handle = AnnoyIndex(n_samples, metric=metric)
+    index_handle.load(annoy_index_fp)
+
+    # Make a set with all of the genes that need to be clustered
+    to_cluster = set(list(range(n_genes)))
+
+    get_single_cag(annoy_index_fp, 4, n_samples, metric, max_dist)
 
 
 def find_cags(
