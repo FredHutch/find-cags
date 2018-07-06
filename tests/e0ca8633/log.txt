@@ -1,0 +1,29 @@
+2018-07-06 11:07:59,212 INFO     [find-cags] Reading in the sample sheet from tests/sample_sheet.json
+2018-07-06 11:07:59,212 INFO     [find-cags] Reading in tests/sample_sheet.json
+2018-07-06 11:07:59,212 INFO     [find-cags] Making the abundance DataFrame
+2018-07-06 11:07:59,212 INFO     [find-cags] Normalizing the abundance values by clr
+2018-07-06 11:07:59,212 INFO     [find-cags] Reading in tests/SAMN07424269.json.gz
+2018-07-06 11:08:00,522 INFO     [find-cags] Reading in tests/SAMN07424293.json.gz
+2018-07-06 11:08:02,144 INFO     [find-cags] Reading in tests/SAMN07424320.json.gz
+2018-07-06 11:08:03,765 INFO     [find-cags] Reading in tests/SAMN07424330.json.gz
+2018-07-06 11:08:04,798 INFO     [find-cags] Reading in tests/SAMN07424331.json.gz
+2018-07-06 11:08:06,126 INFO     [find-cags] Reading in tests/SAMN07424333.json.gz
+2018-07-06 11:08:07,442 INFO     [find-cags] Reading in tests/SAMN07424336.json.gz
+2018-07-06 11:08:08,665 INFO     [find-cags] Reading in tests/SAMN07424352.json.gz
+2018-07-06 11:08:10,151 INFO     [find-cags] Reading in tests/SAMN07424361.json.gz
+2018-07-06 11:08:11,274 INFO     [find-cags] Formatting as a DataFrame
+2018-07-06 11:08:16,378 INFO     [find-cags] Read in data for 875,734 genes across 9 samples
+2018-07-06 11:08:16,379 INFO     [find-cags] Making the HNSW index
+2018-07-06 11:08:16,379 INFO     [find-cags] Adding 875,734 genes to the nmslib index
+2018-07-06 11:08:16,548 INFO     [find-cags] Making the index
+2018-07-06 11:08:16,548 INFO     [find-cags] M                   = 100
+2018-07-06 11:08:16,548 INFO     [find-cags] indexThreadQty      = 4
+2018-07-06 11:08:16,548 INFO     [find-cags] efConstruction      = 200
+2018-07-06 11:08:16,549 INFO     [find-cags] maxM			          = 100
+2018-07-06 11:08:16,549 INFO     [find-cags] maxM0			          = 200
+2018-07-06 11:08:16,549 INFO     [find-cags] mult                = 0.217147
+2018-07-06 11:08:16,549 INFO     [find-cags] skip_optimized_index= 0
+2018-07-06 11:08:16,549 INFO     [find-cags] delaunay_type       = 2
+2018-07-06 11:08:16,549 INFO     [find-cags] Set HNSW query-time parameters:
+2018-07-06 11:08:16,549 INFO     [find-cags] ef(Search)         =20
+2018-07-06 11:08:16,549 INFO     [find-cags] algoType           =2

@@ -220,7 +220,7 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
-def make_nmslib_index(df, metric, n_trees=100):
+def make_nmslib_index(df, n_trees=100):
     """Make the HNSW index"""
     logging.info("Making the HNSW index")
     index = nmslib.init(method='hnsw', space='cosinesimil')
@@ -412,7 +412,7 @@ def find_cags(
         df = df.head(50000)
 
     # Make the nmslib index
-    index = make_nmslib_index(df, metric)
+    index = make_nmslib_index(df)
 
     # Make CAGs using the approximate nearest neighbor
     cags = make_cags_with_ann(
