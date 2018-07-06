@@ -9,14 +9,13 @@ import gzip
 import json
 import boto3
 import shutil
+import nmslib
 import logging
 import argparse
 import traceback
 import numpy as np
 import pandas as pd
-from multiprocessing import Pool
 from collections import defaultdict
-from scipy.spatial.distance import cdist
 from scipy.stats import gmean
 
 
@@ -149,152 +148,6 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     return dat
 
 
-def find_pairwise_connections_worker(input_data):
-    d1, d2, metric, max_dist = input_data
-
-    df1, df1_index = d1
-    df2, df2_index = d2
-
-    d = cdist(df1, df2, metric=metric)
-
-    return [
-        (name1, name2, d[ix1, ix2])
-        for ix1, name1 in enumerate(df1_index)
-        for ix2, name2 in enumerate(df2_index)
-        if d[ix1, ix2] <= max_dist and name1 != name2
-    ]
-
-
-def generate_combinations(chunks, metric, max_dist):
-    """Iteratively yield all pairwise combinations of these chunks."""
-
-    # Calculate the total number of combinations
-    n_possible_combinations = int(len(chunks) * (len(chunks) + 1) / 2)
-
-    # Keep track of the number of combinations that have been yielded
-    ix = 0
-    # Keep track of the time it takes to yield successive combinations
-    start_time = time.time()
-
-    for chunk_1_ix in range(len(chunks)):
-        for chunk_2_ix in range(chunk_1_ix, len(chunks)):
-            yield (chunks[chunk_1_ix], chunks[chunk_2_ix], metric, max_dist)
-            ix += 1
-            if ix % 1000 == 0:
-                logging.info("Analyzed {:,} / {:,} combinations ({:,} seconds elapsed)".format(
-                    ix, n_possible_combinations, 
-                    round(time.time() - start_time, 2)
-                ))
-                start_time = time.time()
-
-    logging.info("Analyzed {:,} / {:,} combinations ({:,} seconds elapsed)".format(
-        ix, n_possible_combinations, 
-        round(time.time() - start_time, 2)
-    ))
-
-
-def find_pairwise_connections(df, metric, max_dist, p, chunk_size=100000):
-    gene_names = df.index.values
-    # Break up the DataFrame into chunks
-    chunks = [
-        (df.values[n:(n + chunk_size)], gene_names[n:(n + chunk_size)])
-        for n in range(0, df.shape[0], chunk_size)
-    ]
-
-    logging.info("Made {:,} groups of {:,} genes each".format(
-        len(chunks), chunk_size
-    ))
-
-    connections = [    
-        c
-        for conn in p.imap_unordered(
-            find_pairwise_connections_worker,
-            generate_combinations(chunks, metric, max_dist)
-        )
-        for c in conn
-    ]
-
-    logging.info("Number of connections below the threshold: {:,}".format(
-        len(connections)
-    ))
-    logging.info("Getting the list of singletons")
-
-    # Calculate which genes are singletons with no connections
-    singletons = list(set(gene_names) - set(
-        [
-            connection[0]
-            for connection in connections
-        ] + [
-            connection[1]
-            for connection in connections
-        ]
-    ))
-    return connections, singletons
-
-
-def best_cluster(gene_id, linkages, genes_in_clusters):
-    """Find the best cluster for this gene"""
-    cluster = [gene_id]
-    
-    # Iterate over each of the other genes, starting with the most similar
-    linked_genes = sorted(
-        list(linkages[gene_id].keys()),
-        key=linkages[gene_id].get
-    )
-
-    # If each gene is completely linked, add it to the cluster
-    for neighbor_gene in linked_genes:
-        if all([
-            g1 in linkages[neighbor_gene]
-            for g1 in cluster
-        ]):
-            cluster.append(neighbor_gene)
-    
-    return cluster
-
-
-def complete_linkage_clustering(connections, iteration_ix):
-
-    # Format the connections as a dict of dicts
-    linkages =  defaultdict(dict)
-    for g1, g2, d in connections:
-        linkages[g1][g2] = d
-        linkages[g2][g1] = d
-
-    # Now go through and make the clusters
-    gene_clusters = {}
-    genes_in_clusters = set()
-    next_cluster_id = 0
-
-    # Iterate over each gene
-    for gene_id in linkages.keys():
-        # Skip the gene if it's already in a cluster
-        if gene_id in gene_clusters:
-            continue
-        
-        # Find the genes that form the best cluster with this gene
-        genes_to_combine = best_cluster(gene_id, linkages, genes_in_clusters)
-        assert gene_id in genes_to_combine
-
-        for gene_id in genes_to_combine:
-            genes_in_clusters.add(gene_id)
-            gene_clusters[gene_id] = next_cluster_id
-
-        # Increment the cluster counter
-        next_cluster_id += 1
-
-    # Reformat the clusters as a dict of sets
-    cags = defaultdict(set)
-    for gene_id, cluster_id in gene_clusters.items():
-        cags[cluster_id].add(gene_id)
-
-    # Return a dict of lists (numbering from 0)
-    return {
-        "iteration_{}_cag_{}".format(iteration_ix, ix): list(s)
-        for ix, s in enumerate(cags.values())
-    }
-
-
 def make_summary_abund_df(df, cags, singletons):
     """Make a DataFrame with the average value for each CAG, as well as the singletons."""
     assert len(set(cags.keys()) & set(df.index.values)) == 0, "Collision between protein/CAG names"
@@ -367,11 +220,126 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
+def make_nmslib_index(df, n_trees=100):
+    """Make the HNSW index"""
+    logging.info("Making the HNSW index")
+    index = nmslib.init(method='hnsw', space='cosinesimil')
+
+    logging.info("Adding {:,} genes to the nmslib index".format(df.shape[0]))
+    index.addDataPointBatch(df.values)
+    logging.info("Making the index")
+    index.createIndex({'post': 2, "M": 100}, print_progress=False)
+
+    return index
+
+
+def make_cags_with_ann(
+    index,
+    max_dist,
+    df,
+    threads=1
+):
+    """Make CAGs using the approximate nearest neighbor"""
+
+    # Get the nearest neighbors for every gene
+    starting_n_neighbors=1000
+    logging.info("Starting with the closest {:,} neighbors for all genes".format(starting_n_neighbors))
+    nearest_neighbors = index.knnQueryBatch(df.values, k=starting_n_neighbors, num_threads=threads)
+
+    # Make the optimized cluster for each gene
+    logging.info("Making optimized CAGs")
+    all_cags = {}
+    didnt_find_self = 0
+    start_time = time.time()
+    for gene_ix, gene_name in enumerate(df.index.values):
+        if time.time() - start_time > 30:
+            print("Processed {:,} / {:,} genes".format(
+                gene_ix, df.shape[0]
+            ))
+            start_time = time.time()
+
+        gene_neighbors = [
+            df.index.values[ix]
+            for ix, d in zip(
+                nearest_neighbors[gene_ix][0],
+                nearest_neighbors[gene_ix][1]
+            )
+            if d < max_dist
+        ]
+        if gene_name not in gene_neighbors:
+            didnt_find_self += 1
+            gene_neighbors.append(gene_name)
+        
+        starting_n_neighbors_iter = int(starting_n_neighbors)
+        # If all `starting_n_neighbors` are < max_dist, expand the search
+        while len(gene_neighbors) >= starting_n_neighbors_iter:
+            starting_n_neighbors_iter = starting_n_neighbors_iter * 2
+            ids, distances = index.knnQuery(
+                df.iloc[gene_ix].values,
+                k=starting_n_neighbors_iter
+            )
+            gene_neighbors = [
+                df.index.values[ix]
+                for ix, d in zip(ids, distances)
+                if d < max_dist
+            ]
+
+        all_cags[gene_name] = gene_neighbors
+
+    logging.info("Didn't recall self for {:,} / {:,} genes".format(
+        didnt_find_self, df.shape[0]
+    ))
+
+    # Order the genes by the number of neighbors (descending)
+    n_neighbors_per_gene = {
+        gene_id: len(neighbors)
+        for gene_id, neighbors in all_cags.items()
+    }
+    all_genes = sorted(df.index.values, key=n_neighbors_per_gene.get, reverse=True)
+    logging.info("Largest clusters:")
+    for gene_name in all_genes[:10]:
+        logging.info("{}: {:,}".format(gene_name, n_neighbors_per_gene[gene_name]))
+
+    # Now find the smallest set of CAGs which cover the largest number of genes
+    logging.info("Picking non-overlapping CAGs from the complete set")
+    # Store the CAGs as a dict of lists
+    cags = {}
+    cag_ix = 1
+
+    # Make a set with all of the genes that need to be clustered
+    to_cluster = set(all_genes)
+
+    start_time = time.time()
+
+    for gene_name in all_genes:
+        if gene_name not in to_cluster:
+            continue
+        if time.time() - start_time > 10:
+            logging.info("Number of CAGs: {:,} -- Genes remaining to be clustered: {:,}".format(
+                len(cags), len(to_cluster)
+            ))
+            start_time = time.time()
+
+        # Get the genes linked to this one
+        new_cag = all_cags[gene_name]
+        # Filter to those genes which haven't been clustered yet
+        new_cag = list(set(new_cag) & to_cluster)
+
+        # Now remove this set of genes from the list that needs to be clustered
+        to_cluster -= set(new_cag)
+
+        # Add CAGs with >1 member to the running list
+        if len(new_cag) > 1:
+            cags["cag_{}".format(cag_ix)] = new_cag
+            cag_ix += 1
+
+    return cags
+
+
 def find_cags(
     sample_sheet=None,
     output_prefix=None,
     output_folder=None,
-    metric="euclidean",
     normalization=None,
     max_dist=0.1,
     temp_folder="/scratch",
@@ -380,9 +348,7 @@ def find_cags(
     gene_id_key="id",
     threads=1,
     min_samples=1,
-    iterations=1,
-    test=False,
-    chunk_size=1000,
+    test=False
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -408,20 +374,12 @@ def find_cags(
     consoleHandler.setFormatter(logFormatter)
     rootLogger.addHandler(consoleHandler)
 
-    assert isinstance(iterations, int)
-    assert iterations >= 1
-    assert iterations <= 999, "Don't iterate > 999 times"
-
     # Read in the sample_sheet
     logging.info("Reading in the sample sheet from " + sample_sheet)
     try:
         sample_sheet = read_json(sample_sheet)
     except:
         exit_and_clean_up(temp_folder)
-
-    # Make a pool of workers
-    logging.info("Making a pool of {} workers".format(threads))
-    p = Pool(threads)
 
     # Make the abundance DataFrame
     logging.info("Making the abundance DataFrame")
@@ -459,99 +417,24 @@ def find_cags(
         logging.info("Running in testing mode, subset to 2,000 genes")
         df = df.head(2000)
 
-    # Make a DataFrame that will be condensed into CAGs as we go
-    summary_df = df.copy()
+    # Make the nmslib index
+    index = make_nmslib_index(df)
 
-    # Keep track of the CAGs at each iteration
-    all_cags = []
-
-    # Get the pairwise distances under the threshold
-    for iteration_ix in range(iterations):
-        logging.info("Iteration {}: Finding pairwise connections with {} <= {}".format(
-            iteration_ix + 1,
-            metric,
-            max_dist
-        ))
-        try:
-            connections, singletons = find_pairwise_connections(
-                summary_df,
-                metric,
-                max_dist,
-                p,
-                chunk_size=chunk_size)
-        except:
-            exit_and_clean_up(temp_folder)
-
-        logging.info("Iteration {}: Found {:,} pairwise connections, and {:,} singletons".format(
-            iteration_ix + 1,
-            len(connections),
-            len(singletons)
-        ))
-
-        # Make the CAGs with single-linkage clustering
-        logging.info("Iteration {}: Making CAGs from {:,} pairwise connections".format(
-            iteration_ix + 1,
-            len(connections)))
-        try:
-            # Returns a dict of lists
-            cags = complete_linkage_clustering(connections, iteration_ix)
-        except:
-            exit_and_clean_up(temp_folder)
-        logging.info("Iteration {}: Found {:,} CAGs".format(
-            iteration_ix + 1, len(cags)))
-
-        # Keep track of this set of CAGs
-        all_cags.append(cags)
-
-        # Combine all CAGs in the `summary_df`
-        if len(cags) > 0:
-            # Make a DataFrame summarizing the CAG and singleton abundances
-            logging.info("Combining CAGs")
-            try:
-                summary_df = make_summary_abund_df(summary_df, cags, singletons)
-            except:
-                exit_and_clean_up(temp_folder)
-        else:
-            # No CAGs were found, so stop iterating
-            logging.info("No CAGs found, stopping iterations")
-            break
-
-    # Make a set with all of the gene IDs in the input
-    all_genes = set(df.index.values)
-
-    # Make a single dict with the CAGs grouped across all iterations
-    while len(all_cags) > 1:
-        # The first set of CAGs should entirely contain IDs from the input DataFrame
-        assert all([
-            gene_id in all_genes
-            for cag_members in all_cags[0].values()
-            for gene_id in cag_members
-        ])
-
-        # Now replace the IDs from the second iteration with the names from the first
-        all_cags[1] = {
-            cag_id: [
-                gene_id
-                for cag_member in cag_members
-                for gene_id in all_cags[0].get(cag_member, [cag_member])                
-            ]
-            for cag_id, cag_members in all_cags[1].items()
-        }
-
-        # Add the CAGs that weren't grouped any further in that next iteration
-        for cag_id, cag_members in all_cags[0].items():
-            if any([cag_id in x for x in all_cags[1].values()]) is False:
-                all_cags[1][cag_id] = cag_members
-
-        # Remove the first set of CAGs from the front of the list
-        all_cags = all_cags[1:]
+    # Make CAGs using the approximate nearest neighbor
+    cags = make_cags_with_ann(
+        index,
+        max_dist,
+        df,
+        threads=threads
+    )
 
     # Get the singletons that aren't in any of the CAGs
     genes_in_cags = set([
         gene_id
-        for cag_members in all_cags[0].values()
+        for cag_members in cags.values()
         for gene_id in cag_members
     ])
+    all_genes = set(df.index.values)
     singletons = list(all_genes - genes_in_cags)
 
     logging.info("Number of genes in CAGs: {:,} / {:,}".format(
@@ -559,12 +442,15 @@ def find_cags(
         len(all_genes)
     ))
 
-    logging.info("Number of CAGs: {:,}".format(len(all_cags[0])))
+    logging.info("Number of CAGs: {:,}".format(len(cags)))
+
+    logging.info("Size distribution of CAGs")
+    logging.info(pd.Series(list(map(len, cags.values()))).describe())
 
     assert len(singletons) == len(all_genes) - len(genes_in_cags)
 
     # Now make a summary DF with the mean value for each combined CAG
-    summary_df = make_summary_abund_df(df, all_cags[0], singletons)
+    summary_df = make_summary_abund_df(df, cags, singletons)
 
     # Read in the logs
     logs = "\n".join(open(log_fp, "rt").readlines())
@@ -573,7 +459,7 @@ def find_cags(
     logging.info("Returning results to " + output_folder)
     try:
         return_results(
-            df, summary_df, all_cags[0], logs, output_prefix, output_folder, temp_folder)
+            df, summary_df, cags, logs, output_prefix, output_folder, temp_folder)
     except:
         exit_and_clean_up(temp_folder)
 
@@ -600,10 +486,6 @@ if __name__ == "__main__":
                         required=True,
                         help="""Folder to place results.
                                 (Supported: s3://, or local path).""")
-    parser.add_argument("--metric",
-                        type=str,
-                        default="euclidean",
-                        help="Distance metric calculation method, see scipy.spatial.distance.")
     parser.add_argument("--normalization",
                         type=str,
                         default=None,
@@ -611,7 +493,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-dist",
                         type=float,
                         default=0.01,
-                        help="Maximum distance for single-linkage clustering.")
+                        help="Maximum cosine distance for clustering.")
     parser.add_argument("--temp-folder",
                         type=str,
                         default="/scratch",
@@ -632,21 +514,13 @@ if __name__ == "__main__":
                         type=int,
                         default=1,
                         help="Number of threads to use.")
-    parser.add_argument("--chunk-size",
-                        type=int,
-                        default=100000,
-                        help="Size of chunks to break abundance table into.")
     parser.add_argument("--min-samples",
                         type=int,
                         default=1,
                         help="Filter genes by the number of samples they are found in.")
-    parser.add_argument("--iterations",
-                        type=int,
-                        default=1,
-                        help="Iteratively combine genes to form CAGs (default: 1).")
     parser.add_argument("--test",
                         action="store_true",
-                        help="Run in testing mode and only process a subset of 1,000 genes.")
+                        help="Run in testing mode and only process a subset of 2,000 genes.")
 
     args = parser.parse_args(sys.argv[1:])
 

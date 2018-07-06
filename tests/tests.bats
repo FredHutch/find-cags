@@ -12,9 +12,7 @@
     --output-folder /usr/local/tests/ \
     --temp-folder /scratch \
     --normalization median \
-    --metric correlation \
     --max-dist 0.3 \
-    --iterations 10 \
     --threads 1 \
     --test
 
