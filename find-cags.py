@@ -242,7 +242,7 @@ def make_cags_with_ann(
     """Make CAGs using the approximate nearest neighbor"""
 
     # Get the nearest neighbors for every gene
-    starting_n_neighbors=100
+    starting_n_neighbors=1000
     logging.info("Starting with the closest {:,} neighbors for all genes".format(starting_n_neighbors))
     nearest_neighbors = index.knnQueryBatch(df.values, k=starting_n_neighbors, num_threads=threads)
 
