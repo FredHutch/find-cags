@@ -222,9 +222,21 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
-def make_annoy_index(df, annoy_index_fp, metric):
+def make_annoy_index(df, annoy_index_fp, metric, n_trees=10):
     """Make the annoy index"""
-    pass
+    logging.info("Making the annoy index")
+    index_handle = AnnoyIndex(df.shape[1], metric=metric)
+    logging.info("Adding {:,} genes to the annoy index")
+    for gene_ix in range(df.shape[0]):
+        if gene_ix > 0 and gene_ix % 100000 == 0:
+            logging.info("Added {:,} / {:,} genes to the index".format(
+                gene_ix, df.shape[0]
+            ))
+        index_handle.add_item(gene_ix, df.iloc[gene_ix].values)
+    logging.info("Building trees in the index")
+    index_handle.build(n_trees)
+    logging.info("Saving the index to " + annoy_index_fp)
+    index_handle.save(annoy_index_fp)
 
 
 def make_cags_with_ann(
