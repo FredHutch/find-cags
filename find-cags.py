@@ -450,8 +450,8 @@ def find_cags(
 
     # If this is being run in testing mode, subset to 2,000 genes
     if test:
-        logging.info("Running in testing mode, subset to 2,000 genes")
-        df = df.head(2000)
+        logging.info("Running in testing mode, subset to 50,000 genes")
+        df = df.head(50000)
 
     # Make the annoy index
     index_handle = make_annoy_index(df, metric)
