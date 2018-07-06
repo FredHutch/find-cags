@@ -368,10 +368,6 @@ def find_cags(
     consoleHandler.setFormatter(logFormatter)
     rootLogger.addHandler(consoleHandler)
 
-    assert isinstance(iterations, int)
-    assert iterations >= 1
-    assert iterations <= 999, "Don't iterate > 999 times"
-
     # Read in the sample_sheet
     logging.info("Reading in the sample sheet from " + sample_sheet)
     try:
