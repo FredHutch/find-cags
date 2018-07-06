@@ -57,23 +57,27 @@ and values are file locations) and located in `tests/sample_sheet.json`.
 
 #### Normalization
 
-The `--normalize` metric accepts two values, `median` and `sum`. In each case
+The `--normalize` metric accepts three values, `clr`, `median`, and `sum`. In each case
 the abundance metric for each gene within each sample is divided by either
 the `median` or the `sum` of the abundance metrics for all genes within that
 sample. When calculating the `median`, only genes with non-zero abundances
-are considered.
+are considered. For `clr`, each value is divided by the geometric mean for the
+sample, and then the log10 is taken. All zero values are filled with the minimum
+value for the entire dataset (so that they are equal across samples, and not
+sensitive to sequencing depth).
+
+
+#### Approximate Nearest Neighbor
+
+The Approximate Nearest Neighbor algorithm as implemented by 
+[nmslib](https://nmslib.github.io/nmslib/index.html) is being used to create the CAGs.
+This implementation has a high performance in an independent 
+[benchmark](http://ann-benchmarks.com/).
 
 
 #### Distance Metric
 
-Any of the distance metrics supported by `scipy.spatial.distance.cdist` are
-supported. See [the scipy documentation for more details](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.distance.cdist.html)
-
-
-#### Clustering Method
-
-At the moment we will support single-linkage clustering, using a single distance
-threshold.
+The distance metric is now hard-coded to be the cosine similarity.
 
 
 #### Invocation
@@ -81,11 +85,11 @@ threshold.
 ```
 usage: find-cags.py [-h] --sample-sheet SAMPLE_SHEET --output-prefix
                     OUTPUT_PREFIX --output-folder OUTPUT_FOLDER
-                    [--metric METRIC] [--normalization NORMALIZATION]
-                    [--max-dist MAX_DIST] [--temp-folder TEMP_FOLDER]
-                    [--results-key RESULTS_KEY]
+                    [--normalization NORMALIZATION] [--max-dist MAX_DIST]
+                    [--temp-folder TEMP_FOLDER] [--results-key RESULTS_KEY]
                     [--abundance-key ABUNDANCE_KEY]
-                    [--gene-id-key GENE_ID_KEY]
+                    [--gene-id-key GENE_ID_KEY] [--threads THREADS]
+                    [--min-samples MIN_SAMPLES] [--test]
 
 Find a set of co-abundant genes
 
@@ -98,11 +102,9 @@ optional arguments:
   --output-folder OUTPUT_FOLDER
                         Folder to place results. (Supported: s3://, or local
                         path).
-  --metric METRIC       Distance metric calculation method, see
-                        scipy.spatial.distance.
   --normalization NORMALIZATION
-                        Normalization factor per-sample (median or sum).
-  --max-dist MAX_DIST   Maximum distance for single-linkage clustering.
+                        Normalization factor per-sample (median, sum, or clr).
+  --max-dist MAX_DIST   Maximum cosine distance for clustering.
   --temp-folder TEMP_FOLDER
                         Folder for temporary files.
   --results-key RESULTS_KEY
@@ -115,4 +117,9 @@ optional arguments:
                         Key identifying the gene ID for each element in the
                         results list.
   --threads THREADS     Number of threads to use.
+  --min-samples MIN_SAMPLES
+                        Filter genes by the number of samples they are found
+                        in.
+  --test                Run in testing mode and only process a subset of 2,000
+                        genes.
   ```
