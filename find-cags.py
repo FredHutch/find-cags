@@ -242,7 +242,7 @@ def make_cags_with_ann(
     """Make CAGs using the approximate nearest neighbor"""
 
     # Get the nearest neighbors for every gene
-    starting_n_neighbors=1000
+    starting_n_neighbors=100
     logging.info("Starting with the closest {:,} neighbors for all genes".format(starting_n_neighbors))
     nearest_neighbors = index.knnQueryBatch(df.values, k=starting_n_neighbors, num_threads=threads)
 
@@ -266,23 +266,33 @@ def make_cags_with_ann(
             )
             if d < max_dist
         ]
-        if gene_name not in gene_neighbors:
-            didnt_find_self += 1
-            gene_neighbors.append(gene_name)
         
         starting_n_neighbors_iter = int(starting_n_neighbors)
         # If all `starting_n_neighbors` are < max_dist, expand the search
-        while len(gene_neighbors) >= starting_n_neighbors_iter:
+        for _ in range(100):  # Limit the number of total iterations
+
+            # Stop if the number of neighbors is less than the set examined
+            if len(gene_neighbors) < starting_n_neighbors_iter:
+                break
+
+            # Increase the limit of how many neighbors are returned
             starting_n_neighbors_iter = starting_n_neighbors_iter * 2
+
+            # Fetch the neighbors
             ids, distances = index.knnQuery(
                 df.iloc[gene_ix].values,
                 k=starting_n_neighbors_iter
             )
+            # Filter to the set below the threshold
             gene_neighbors = [
                 df.index.values[ix]
                 for ix, d in zip(ids, distances)
                 if d < max_dist
             ]
+
+        if gene_name not in gene_neighbors:
+            didnt_find_self += 1
+            gene_neighbors.append(gene_name)
 
         all_cags[gene_name] = gene_neighbors
 
