@@ -239,7 +239,14 @@ def make_annoy_index(df, annoy_index_fp, metric, n_trees=10):
     index_handle.save(annoy_index_fp)
 
 
-def get_single_cag(annoy_index_fp, gene_ix, n_samples, metric, max_dist):
+def get_single_cag(annoy_index_fp,
+    gene_ix,
+    n_samples,
+    metric,
+    max_dist,
+    recursion_depth=0,
+    max_recursion_depth=10
+):
     """Get the CAGs for a single gene. This will always return a set including gene_ix"""
     index_handle = AnnoyIndex(n_samples, metric=metric)
     index_handle.load(annoy_index_fp)
@@ -282,13 +289,18 @@ def get_single_cag(annoy_index_fp, gene_ix, n_samples, metric, max_dist):
     if index_handle.get_distance(gene_ix, centroid) < max_dist / 10:
         return neighbors
 
+    # If we've reached our maximum recursion depth, return this set
+    if recursion_depth >= max_recursion_depth:
+        return neighbors
+
     # Otherwise, pick the CAGs based on this new centroid
     new_neighbors = get_single_cag(
         annoy_index_fp,
         centroid,
         n_samples,
         metric,
-        max_dist
+        max_dist,
+        recursion_depth=recursion_depth+1
     )
     # If the gene_ix is in the new set of neighbors, return that
     if gene_ix in new_neighbors:
