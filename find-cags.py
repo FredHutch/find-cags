@@ -9,12 +9,12 @@ import gzip
 import json
 import boto3
 import shutil
+import nmslib
 import logging
 import argparse
 import traceback
 import numpy as np
 import pandas as pd
-from annoy import AnnoyIndex
 from multiprocessing import Pool
 from collections import defaultdict
 from scipy.spatial.distance import cdist
@@ -222,128 +222,102 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
-def make_annoy_index(df, metric, n_trees=100):
-    """Make the annoy index"""
-    logging.info("Making the annoy index")
-    index_handle = AnnoyIndex(df.shape[1], metric=metric)
-    logging.info("Adding {:,} genes to the annoy index".format(df.shape[0]))
-    for gene_ix in range(df.shape[0]):
-        if gene_ix > 0 and gene_ix % 100000 == 0:
-            logging.info("Added {:,} / {:,} genes to the index".format(
-                gene_ix, df.shape[0]
-            ))
-        index_handle.add_item(gene_ix, df.iloc[gene_ix].values)
-    logging.info("Building trees in the index")
-    index_handle.build(n_trees)
-    return index_handle
+def make_nmslib_index(df, metric, n_trees=100):
+    """Make the HNSW index"""
+    logging.info("Making the HNSW index")
+    index = nmslib.init(method='hnsw', space='cosinesimil')
 
+    logging.info("Adding {:,} genes to the nmslib index".format(df.shape[0]))
+    index.addDataPointBatch(df.values)
+    logging.info("Making the index")
+    index.createIndex({'post': 2, "M": 200}, print_progress=False)
 
-def get_single_cag(
-    index_handle,
-    gene_ix,
-    n_samples,
-    metric,
-    max_dist,
-    recursion_depth=0,
-    max_recursion_depth=10
-):
-    """Get the CAGs for a single gene. This will always return a set including gene_ix"""
+    return index
 
-    n_neighbors_to_check = 10
-    neighbors = index_handle.get_nns_by_item(
-        gene_ix,
-        n_neighbors_to_check,
-        include_distances=True
-    )
-    # Make sure we've got all of the neighbors within the threshold
-    while neighbors[1][-1] < max_dist:
-        n_neighbors_to_check = n_neighbors_to_check * 2
-        neighbors = index_handle.get_nns_by_item(
-            gene_ix,
-            n_neighbors_to_check,
-            include_distances=True
-        )
-
-    # Now subset to those genes within the threshold
-    neighbors = [
-        ix
-        for ix, d in zip(neighbors[0], neighbors[1])
-        if d < max_dist
-    ]
-    if gene_ix not in neighbors:
-        neighbors.append(gene_ix)
-
-    # No neighbors were found
-    if len(neighbors) == 1:
-        return [gene_ix]
-
-    # Make a distance matrix
-    dm = pd.DataFrame({
-        ix_1: {
-            ix_2: index_handle.get_distance(ix_1, ix_2)
-            for ix_2 in neighbors
-        }
-        for ix_1 in neighbors
-    })
-    
-    # Pick a centroid as the gene with the lowest median distance
-    centroid = dm.median().sort_values().index.values[0]
-
-    # If the centroid is very close to the starting place, return this set
-    if index_handle.get_distance(gene_ix, centroid) < max_dist / 10:
-        return neighbors
-
-    # If we've reached our maximum recursion depth, return this set
-    if recursion_depth >= max_recursion_depth:
-        return neighbors
-
-    # Otherwise, pick the CAGs based on this new centroid
-    new_neighbors = get_single_cag(
-        index_handle,
-        centroid,
-        n_samples,
-        metric,
-        max_dist,
-        recursion_depth=recursion_depth+1
-    )
-    # If the gene_ix is in the new set of neighbors, return that
-    if gene_ix in new_neighbors:
-        return new_neighbors
-    # Otherwise, return the original set of neighbors
-    return neighbors
-    
 
 def make_cags_with_ann(
-    index_handle,
-    metric,
+    index,
     max_dist,
-    n_genes,
-    n_samples,
-    gene_names
+    df,
+    threads=1
 ):
     """Make CAGs using the approximate nearest neighbor"""
 
-    # Make a set with all of the genes that need to be clustered
-    to_cluster = set(list(range(n_genes)))
+    # Get the nearest neighbors for every gene
+    starting_n_neighbors=100
+    logging.info("Starting with the closest {:,} neighbors for all genes".format(starting_n_neighbors))
+    nearest_neighbors = index.knnQueryBatch(df.values, k=starting_n_neighbors, num_threads=threads)
 
+    # Make the optimized cluster for each gene
+    logging.info("Making optimized CAGs")
+    all_cags = {}
+    didnt_find_self = 0
+    for gene_ix, gene_name in enumerate(df.index.values):
+
+        gene_neighbors = [
+            df.index.values[ix]
+            for ix, d in zip(
+                nearest_neighbors[gene_ix][0],
+                nearest_neighbors[gene_ix][1]
+            )
+            if d < max_dist
+        ]
+        if gene_name not in gene_neighbors:
+            didnt_find_self += 1
+            gene_neighbors.append(gene_name)
+        
+        starting_n_neighbors_iter = int(starting_n_neighbors)
+        # If all `starting_n_neighbors` are < max_dist, expand the search
+        while len(gene_neighbors) >= starting_n_neighbors_iter:
+            starting_n_neighbors_iter = starting_n_neighbors_iter * 2
+            ids, distances = index.knnQuery(
+                df.iloc[gene_ix].values,
+                k=starting_n_neighbors_iter
+            )
+            gene_neighbors = [
+                df.index.values[ix]
+                for ix, d in zip(ids, distances)
+                if d < max_dist
+            ]
+
+        all_cags[gene_name] = gene_neighbors
+
+    logging.info("Didn't recall self for {:,} / {:,} genes".format(
+        didnt_find_self, df.shape[0]
+    ))
+
+    # Order the genes by the number of neighbors (descending)
+    n_neighbors_per_gene = {
+        gene_id: len(neighbors)
+        for gene_id, neighbors in all_cags.items()
+    }
+    all_genes = sorted(df.index.values, key=n_neighbors_per_gene.get, reverse=True)
+    logging.info("Largest clusters:")
+    for gene_name in all_genes[:10]:
+        logging.info("{}: {:,}".format(gene_name, n_neighbors_per_gene[gene_name]))
+
+    # Now find the smallest set of CAGs which cover the largest number of genes
+    logging.info("Picking non-overlapping CAGs from the complete set")
     # Store the CAGs as a dict of lists
-    cag_ix = 0
     cags = {}
+    cag_ix = 1
+
+    # Make a set with all of the genes that need to be clustered
+    to_cluster = set(all_genes)
 
     start_time = time.time()
 
-    while len(to_cluster) > 0:
+    for gene_name in all_genes:
+        if gene_name not in to_cluster:
+            continue
         if time.time() - start_time > 10:
             logging.info("Number of CAGs: {:,} -- Genes remaining to be clustered: {:,}".format(
                 len(cags), len(to_cluster)
             ))
             start_time = time.time()
-        # Get a single random gene index
-        gene_ix = to_cluster.pop()
-        to_cluster.add(gene_ix)
 
         # Get the genes linked to this one
-        new_cag = get_single_cag(index_handle, gene_ix, n_samples, metric, max_dist)
+        new_cag = all_cags[gene_name]
         # Filter to those genes which haven't been clustered yet
         new_cag = list(set(new_cag) & to_cluster)
 
@@ -352,10 +326,7 @@ def make_cags_with_ann(
 
         # Add CAGs with >1 member to the running list
         if len(new_cag) > 1:
-            cags["cag_{}".format(cag_ix)] = [
-                gene_names[ix]
-                for ix in new_cag
-            ]
+            cags["cag_{}".format(cag_ix)] = new_cag
             cag_ix += 1
 
     return cags
@@ -413,10 +384,6 @@ def find_cags(
     except:
         exit_and_clean_up(temp_folder)
 
-    # Make a pool of workers
-    logging.info("Making a pool of {} workers".format(threads))
-    p = Pool(threads)
-
     # Make the abundance DataFrame
     logging.info("Making the abundance DataFrame")
     try:
@@ -453,17 +420,15 @@ def find_cags(
         logging.info("Running in testing mode, subset to 50,000 genes")
         df = df.head(50000)
 
-    # Make the annoy index
-    index_handle = make_annoy_index(df, metric)
+    # Make the nmslib index
+    index = make_nmslib_index(df, metric)
 
     # Make CAGs using the approximate nearest neighbor
     cags = make_cags_with_ann(
-        index_handle,
-        metric,
+        index,
         max_dist,
-        df.shape[0],
-        df.shape[1],
-        df.index.values
+        df,
+        threads=threads
     )
 
     # Get the singletons that aren't in any of the CAGs
@@ -481,6 +446,9 @@ def find_cags(
     ))
 
     logging.info("Number of CAGs: {:,}".format(len(cags)))
+
+    logging.info("Size distribution of CAGs")
+    logging.info(pd.Series(list(map(len, cags.values()))).describe())
 
     assert len(singletons) == len(all_genes) - len(genes_in_cags)
 
@@ -524,7 +492,7 @@ if __name__ == "__main__":
     parser.add_argument("--metric",
                         type=str,
                         default="angular",
-                        help="Distance metric calculation method, see spotify/annoy.")
+                        help="Distance metric calculation method, see nmslib.")
     parser.add_argument("--normalization",
                         type=str,
                         default=None,
