@@ -4,6 +4,7 @@ import os
 import io
 import sys
 import uuid
+import copy
 import time
 import gzip
 import json
@@ -148,19 +149,22 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     return dat
 
 
-def make_summary_abund_df(df, cags, singletons):
-    """Make a DataFrame with the average value for each CAG, as well as the singletons."""
-    assert len(set(cags.keys()) & set(df.index.values)) == 0, "Collision between protein/CAG names"
-
-    summary_df = pd.concat([
-        pd.DataFrame({
-            cag_ix: df.loc[cag].mean()
-            for cag_ix, cag in cags.items()
-        }).T,
-        df.loc[singletons]
+def make_summary_abund_df(df, cags):
+    """Make a DataFrame with the average value for each CAG."""
+    # Make sure that the members of every cag are rows in the `df`
+    row_names = set(df.index.values)
+    assert all([
+        cag_member in row_names
+        for cag_member_list in cags.values()
+        for cag_member in cag_member_list
     ])
 
-    assert summary_df.shape[0] == len(cags) + len(singletons)
+    summary_df = pd.DataFrame({
+            cag_ix: df.loc[cag].mean()
+            for cag_ix, cag in cags.items()
+    }).T
+
+    assert summary_df.shape[0] == len(cags)
     assert summary_df.shape[1] == df.shape[1]
 
     return summary_df
@@ -322,6 +326,7 @@ def make_cags_with_ann(
     start_time = time.time()
 
     for gene_name in all_genes:
+        # Skip genes that are already in a CAG
         if gene_name not in to_cluster:
             continue
         if time.time() - start_time > 10:
@@ -338,10 +343,13 @@ def make_cags_with_ann(
         # Now remove this set of genes from the list that needs to be clustered
         to_cluster -= set(new_cag)
 
-        # Add CAGs with >1 member to the running list
-        if len(new_cag) > 1:
-            cags["cag_{}".format(cag_ix)] = new_cag
-            cag_ix += 1
+        # Add CAGs to the running list
+        cags["cag_{}".format(cag_ix)] = new_cag
+        cag_ix += 1
+
+    # Basic sanity checks
+    assert all([len(v) > 0 for v in cags.values()])
+    assert sum(map(len, cags.values())) == df.shape[0], (sum(map(len, cags.values())), df.shape[0])
 
     return cags
 
@@ -358,10 +366,16 @@ def find_cags(
     gene_id_key="id",
     threads=1,
     min_samples=1,
+    iterations=1,
     test=False
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
+
+    # The number of iterations can't be below 1 or above 999
+    assert isinstance(iterations, int)
+    assert iterations >= 1
+    assert iterations <= 999
 
     # Make a new temp folder
     temp_folder = os.path.join(temp_folder, str(uuid.uuid4())[:8])
@@ -427,40 +441,74 @@ def find_cags(
         logging.info("Running in testing mode, subset to 2,000 genes")
         df = df.head(2000)
 
-    # Make the nmslib index
-    index = make_nmslib_index(df)
+    # Make a dummy set of CAGs that link each protein to itself
+    previous_cags = {
+        protein_id: [protein_id]
+        for protein_id in df.index.values
+    }
+    summary_df = df.copy()
 
-    # Make CAGs using the approximate nearest neighbor
-    cags = make_cags_with_ann(
-        index,
-        max_dist,
-        df,
-        threads=threads
-    )
+    # Make CAGs iteratively until they are all used up
+    for iteration_ix in range(iterations):
+        logging.info("Starting iteration {}".format(iteration_ix + 1))
 
-    # Get the singletons that aren't in any of the CAGs
-    genes_in_cags = set([
-        gene_id
-        for cag_members in cags.values()
-        for gene_id in cag_members
-    ])
-    all_genes = set(df.index.values)
-    singletons = list(all_genes - genes_in_cags)
+        # Make the nmslib index
+        index = make_nmslib_index(summary_df)
 
-    logging.info("Number of genes in CAGs: {:,} / {:,}".format(
-        len(genes_in_cags),
-        len(all_genes)
-    ))
+        # Make CAGs using the approximate nearest neighbor
+        cags = make_cags_with_ann(
+            index,
+            max_dist,
+            summary_df,
+            threads=threads
+        )
 
-    logging.info("Number of CAGs: {:,}".format(len(cags)))
+        # Make sure that every member of this set of CAGs was the cag_id from the last round
+        previous_cag_names = set(list(previous_cags.keys()))
+        assert all([
+            cag_member in previous_cag_names
+            for cag_member_list in cags.values()
+            for cag_member in cag_member_list
+        ])
 
-    logging.info("Size distribution of CAGs")
-    logging.info(pd.Series(list(map(len, cags.values()))).describe())
+        # Check and see if the number of CAGs is smaller than the last round
+        assert len(cags) <= len(previous_cags)
+        if len(cags) == len(previous_cags):
+            logging.info("No additional linkages found, stopping iteration")
+            break
 
-    assert len(singletons) == len(all_genes) - len(genes_in_cags)
+        # Replace the names of the members of the CAGs with the names from the previous round
+        logging.info("Mapping names of CAGs from previous round")
+        cags = {
+            cag_id: [
+                previous_cag_member
+                for cag_member in cag_members
+                for previous_cag_member in previous_cags[cag_member]
+            ]
+            for cag_id, cag_members in cags.items()
+        }
 
-    # Now make a summary DF with the mean value for each combined CAG
-    summary_df = make_summary_abund_df(df, cags, singletons)
+        # Print the number of total CAGs, number of singletons, etc.
+        logging.info("Iteration {}: Number of CAGs = {:,}".format(
+            iteration_ix + 1, len(cags)
+        ))
+        # Print the number of total CAGs, number of singletons, etc.
+        logging.info("Iteration {}: Number of singletons = {:,} / {:,}".format(
+            iteration_ix + 1,
+            sum([len(v) == 1 for v in cags.values()]),
+            sum(map(len, cags.values()))
+        ))
+        # Print the number of total CAGs, number of singletons, etc.
+        logging.info("Iteration {}: Largest CAG = {:,}".format(
+            iteration_ix + 1, max(map(len, cags.values()))
+        ))
+
+        logging.info("Size distribution of CAGs")
+        logging.info(pd.Series(list(map(len, cags.values()))).describe())
+
+        # Now make a summary DF with the mean value for each combined CAG
+        summary_df = make_summary_abund_df(df, cags)
+        previous_cags = copy.deepcopy(cags)
 
     # Read in the logs
     logs = "\n".join(open(log_fp, "rt").readlines())
@@ -520,6 +568,10 @@ if __name__ == "__main__":
                         type=str,
                         default="id",
                         help="Key identifying the gene ID for each element in the results list.")
+    parser.add_argument("--iterations",
+                        type=int,
+                        default=1,
+                        help="Number of iterations to run.")
     parser.add_argument("--threads",
                         type=int,
                         default=1,
