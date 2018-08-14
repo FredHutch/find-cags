@@ -310,9 +310,6 @@ def make_cags_with_ann(
         for gene_id, neighbors in all_cags.items()
     }
     all_genes = sorted(df.index.values, key=n_neighbors_per_gene.get, reverse=True)
-    logging.info("Largest clusters:")
-    for gene_name in all_genes[:10]:
-        logging.info("{}: {:,}".format(gene_name, n_neighbors_per_gene[gene_name]))
 
     # Now find the smallest set of CAGs which cover the largest number of genes
     logging.info("Picking non-overlapping CAGs from the complete set")
@@ -329,11 +326,6 @@ def make_cags_with_ann(
         # Skip genes that are already in a CAG
         if gene_name not in to_cluster:
             continue
-        if time.time() - start_time > 10:
-            logging.info("Number of CAGs: {:,} -- Genes remaining to be clustered: {:,}".format(
-                len(cags), len(to_cluster)
-            ))
-            start_time = time.time()
 
         # Get the genes linked to this one
         new_cag = all_cags[gene_name]
@@ -503,8 +495,16 @@ def find_cags(
             iteration_ix + 1, max(map(len, cags.values()))
         ))
 
-        logging.info("Size distribution of CAGs")
+        logging.info("Size distribution of CAGs:")
         logging.info(pd.Series(list(map(len, cags.values()))).describe())
+
+        logging.info("Largest CAGs:")
+        logging.info("\n".join([
+            "{}: {:,}".format(cag_id, cag_size)
+            for cag_id, cag_size in pd.Series(dict(zip(
+                cags.keys(), map(len, cags.values())
+            ))).sort_values(ascending=False).head(10).items()
+        ]))
 
         # Now make a summary DF with the mean value for each combined CAG
         summary_df = make_summary_abund_df(df, cags)
