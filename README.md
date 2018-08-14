@@ -80,6 +80,13 @@ This implementation has a high performance in an independent
 The distance metric is now hard-coded to be the cosine similarity.
 
 
+#### Iterations
+
+The algorithm can be run iteratively, which may help with some of the noise and
+imperfect recall of the ANN algorithm. Use the `--iterations` flag to set the number
+of iterations to attemp (less than 1,000).
+
+
 #### Invocation
 
 ```
@@ -88,8 +95,8 @@ usage: find-cags.py [-h] --sample-sheet SAMPLE_SHEET --output-prefix
                     [--normalization NORMALIZATION] [--max-dist MAX_DIST]
                     [--temp-folder TEMP_FOLDER] [--results-key RESULTS_KEY]
                     [--abundance-key ABUNDANCE_KEY]
-                    [--gene-id-key GENE_ID_KEY] [--threads THREADS]
-                    [--min-samples MIN_SAMPLES] [--test]
+                    [--gene-id-key GENE_ID_KEY] [--iterations ITERATIONS]
+                    [--threads THREADS] [--min-samples MIN_SAMPLES] [--test]
 
 Find a set of co-abundant genes
 
@@ -116,6 +123,8 @@ optional arguments:
   --gene-id-key GENE_ID_KEY
                         Key identifying the gene ID for each element in the
                         results list.
+  --iterations ITERATIONS
+                        Number of iterations to run.
   --threads THREADS     Number of threads to use.
   --min-samples MIN_SAMPLES
                         Filter genes by the number of samples they are found
