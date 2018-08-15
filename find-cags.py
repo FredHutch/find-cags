@@ -463,12 +463,6 @@ def find_cags(
             for cag_member in cag_member_list
         ])
 
-        # Check and see if the number of CAGs is smaller than the last round
-        assert len(cags) <= len(previous_cags)
-        if len(cags) == len(previous_cags):
-            logging.info("No additional linkages found, stopping iteration")
-            break
-
         # Replace the names of the members of the CAGs with the names from the previous round
         logging.info("Mapping names of CAGs from previous round")
         cags = {
@@ -479,6 +473,12 @@ def find_cags(
             ]
             for cag_id, cag_members in cags.items()
         }
+
+        # Check and see if the number of CAGs is smaller than the last round
+        assert len(cags) <= len(previous_cags)
+        if len(cags) == len(previous_cags):
+            logging.info("No additional linkages found, stopping iteration")
+            break
 
         # Print the number of total CAGs, number of singletons, etc.
         logging.info("Iteration {}: Number of CAGs = {:,}".format(
