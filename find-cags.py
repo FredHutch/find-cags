@@ -419,7 +419,7 @@ def find_cags(
         start_time = time.time()
 
         # Filter
-        df = df.loc[(df > 0).sum(axis=1) >= min_samples]
+        df = df.loc[(df > df.min().min()).sum(axis=1) >= min_samples]
 
         logging.info("{:,} / {:,} genes found in >= {:,} samples ({:,} seconds elapsed)".format(
             df.shape[0],
