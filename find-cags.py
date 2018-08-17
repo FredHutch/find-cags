@@ -16,8 +16,9 @@ import argparse
 import traceback
 import numpy as np
 import pandas as pd
-from collections import defaultdict
 from scipy.stats import gmean
+from multiprocessing import Pool
+from scipy.spatial.distance import cdist
 
 
 def exit_and_clean_up(temp_folder):
@@ -72,24 +73,49 @@ def read_json(fp):
             dat = json.load(open(fp, "rt"))
 
     # Make sure that the sample sheet is a dictionary
-    assert isinstance(dat, dict)    
+    assert isinstance(dat, dict)
 
     return dat
 
 
-def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_key, normalization):
-    """Make a single DataFrame with the abundance from all samples."""
+def normalize_abundance_dataframe(df, normalization):
+    """Normalize the raw depth values on a per-sample basis."""
 
-    # Normalize each sample's data
-    if normalization is not None:
-        assert normalization in ["median", "sum", "clr"]
-        logging.info("Normalizing the abundance values by " + normalization)
+    assert normalization in ["median", "sum", "clr"]
+    logging.info("Normalizing the abundance values by " + normalization)
+
+    # Normalize the abundance
+
+    if normalization == "median":
+        # Divide by the median on a per-sample basis
+        df = df.apply(lambda v: v / v.loc[v > 0].median())
+
+    elif normalization == "sum":
+        # Divide by the median on a per-sample basis
+        df = df / df.sum()
+
+    elif normalization == "clr":
+        # Divide by the median on a per-sample basis
+        df = df.apply(lambda v: v / v.loc[v > 0].median())
+
+        # Replace the zeros with the lowest non-zero value
+        lowest_non_zero_value = df.apply(lambda v: v.loc[v > 0].min()).min()
+        df.replace(to_replace={0: lowest_non_zero_value}, inplace=True)
+
+        # Now take the log10
+        df = df.apply(np.log10)
+
+    # There are no NaN values
+    assert df.shape[0] == df.dropna().shape[0]
+
+    return df
+
+
+def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_key):
+    """Make a single DataFrame with the abundance (depth) from all samples."""
 
     # Collect all of the abundance information in this single dict
     dat = {}
-
-    # Keep track of the lowest value across all samples
-    lowest_value = None
 
     # Iterate over each sample
     for sample_name, sample_path in sample_sheet.items():
@@ -109,37 +135,13 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
             assert gene_id_key in d
 
         # Format as a Series
-        sample_dat = pd.Series({
+        dat[sample_name] = pd.Series({
             d[gene_id_key]: np.float16(d[abundance_key])
             for d in sample_dat
         })
 
-        # Normalize the abundance
-        if normalization == "median":
-            sample_dat = sample_dat / sample_dat.median()
-        elif normalization == "sum":
-            sample_dat = sample_dat / sample_dat.sum()
-        elif normalization == "clr":
-            sample_dat = (
-                sample_dat / gmean(sample_dat)
-            ).apply(np.log10).apply(np.float16)
-
-        # Keep track of the lowest value across all samples
-        if lowest_value is None:
-            lowest_value = sample_dat.min()
-        else:
-            lowest_value = np.min([lowest_value, sample_dat.min()])
-
-        # Add the data to the total
-        dat[sample_name] = sample_dat
-
     logging.info("Formatting as a DataFrame")
-    if normalization in ["median", "sum"] or normalization is None:
-        dat = pd.DataFrame(dat).fillna(np.float16(0))
-    else:
-        assert normalization == "clr", normalization
-        assert lowest_value is not None
-        dat = pd.DataFrame(dat).fillna(lowest_value)
+    dat = pd.DataFrame(dat).fillna(np.float16(0))
 
     logging.info("Read in data for {:,} genes across {:,} samples".format(
         dat.shape[0],
@@ -160,8 +162,8 @@ def make_summary_abund_df(df, cags):
     ])
 
     summary_df = pd.DataFrame({
-            cag_ix: df.loc[cag].mean()
-            for cag_ix, cag in cags.items()
+        cag_ix: df.loc[cag].mean()
+        for cag_ix, cag in cags.items()
     }).T
 
     assert summary_df.shape[0] == len(cags)
@@ -199,7 +201,8 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             with open(fp, "wt") as f:
                 f.write(obj)
         else:
-            raise Exception("Object cannot be written, no method for " + suffix)
+            raise Exception(
+                "Object cannot be written, no method for " + suffix)
 
         if output_folder.startswith("s3://"):
             bucket, prefix = output_folder[5:].split("/", 1)
@@ -214,7 +217,6 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
                 file_prefix
             ))
             s3.Bucket(bucket).upload_file(fp, file_prefix)
-
 
         else:
             # Copy as a local file
@@ -237,22 +239,80 @@ def make_nmslib_index(df):
     return index
 
 
+def greedy_complete_linkage_clustering(input_data):
+    """Use a greedy approach to get the complete linkage group connected to the central gene."""
+
+    central_gene, central_gene_ix, gene_names, df, max_dist = input_data
+
+    if central_gene_ix % 1000 == 0:
+        logging.info("Processing gene {:,}".format(central_gene_ix))
+
+    # Singletons
+    if len(gene_names) == 1:
+        return central_gene, gene_names
+
+    # Take the central gene out of the list of gene names
+    gene_names = [g for g in gene_names if g != central_gene]
+
+    # Calculate the distance of all genes against the central gene
+    central_gene_dists = {
+        g: d
+        for g, d in zip(
+            gene_names,
+            cdist(df.loc[[central_gene]],
+                  df.loc[gene_names], metric="cosine")[0]
+        )
+    }
+
+    # Sort the genes by their closeness to the central one
+    gene_names = sorted(gene_names, key=central_gene_dists.get)
+
+    # Start the cluster
+    cluster = [central_gene]
+
+    # Add to the cluster until we're out
+    for g in gene_names:
+
+        # Skip genes that aren't close enough to the central gene
+        if central_gene_dists[g] >= max_dist:
+            continue
+
+        # Keep track of whether this should be added to the cluster
+        add_to_cluster = True
+
+        # Check the distance against every member of the cluster
+        for d in cdist(df.loc[[g]], df.loc[cluster], metric="cosine")[0]:
+            if d >= max_dist:
+                add_to_cluster = False
+                break
+
+        # Only add the gene if it's within the threshold for all previous genes
+        if add_to_cluster:
+            cluster.append(g)
+
+    return central_gene, cluster
+
+
 def make_cags_with_ann(
     index,
     max_dist,
     df,
-    threads=1
+    pool,
+    threads=1,
+    starting_n_neighbors=1000
 ):
     """Make CAGs using the approximate nearest neighbor"""
 
     # Get the nearest neighbors for every gene
-    starting_n_neighbors=1000
-    logging.info("Starting with the closest {:,} neighbors for all genes".format(starting_n_neighbors))
-    nearest_neighbors = index.knnQueryBatch(df.values, k=starting_n_neighbors, num_threads=threads)
+    logging.info("Starting with the closest {:,} neighbors for all genes".format(
+        starting_n_neighbors))
+    nearest_neighbors = index.knnQueryBatch(
+        df.values, k=starting_n_neighbors, num_threads=threads)
 
-    # Make the optimized cluster for each gene
-    logging.info("Making optimized CAGs")
-    all_cags = {}
+    # Get the candidate groups for every gene
+    logging.info("Making candidate groups for every gene")
+    candidate_groups = []
+
     didnt_find_self = 0
     start_time = time.time()
     for gene_ix, gene_name in enumerate(df.index.values):
@@ -262,54 +322,57 @@ def make_cags_with_ann(
             ))
             start_time = time.time()
 
-        gene_neighbors = [
-            df.index.values[ix]
+        # Add all genes with distance < threshold to the first order connections
+        first_order_gene_neighbors = [
+            ix
             for ix, d in zip(
                 nearest_neighbors[gene_ix][0],
                 nearest_neighbors[gene_ix][1]
             )
             if d < max_dist
         ]
-        
-        starting_n_neighbors_iter = int(starting_n_neighbors)
-        # If all `starting_n_neighbors` are < max_dist, expand the search
-        for _ in range(100):  # Limit the number of total iterations
 
-            # Stop if the number of neighbors is less than the set examined
-            if len(gene_neighbors) < starting_n_neighbors_iter:
-                break
-
-            # Increase the limit of how many neighbors are returned
-            starting_n_neighbors_iter = starting_n_neighbors_iter * 2
-
-            # Fetch the neighbors
-            ids, distances = index.knnQuery(
-                df.iloc[gene_ix].values,
-                k=starting_n_neighbors_iter
-            )
-            # Filter to the set below the threshold
-            gene_neighbors = [
-                df.index.values[ix]
-                for ix, d in zip(ids, distances)
-                if d < max_dist
-            ]
-
-        if gene_name not in gene_neighbors:
+        if gene_ix not in first_order_gene_neighbors:
             didnt_find_self += 1
-            gene_neighbors.append(gene_name)
+            first_order_gene_neighbors.append(gene_ix)
 
-        all_cags[gene_name] = gene_neighbors
+        candidate_groups.append([
+            df.index.values[ix]
+            for ix in first_order_gene_neighbors
+        ])
 
     logging.info("Didn't recall self for {:,} / {:,} genes".format(
         didnt_find_self, df.shape[0]
     ))
+
+    # Now find the optimized CAGs with complete linkage
+    logging.info("Finding optimized CAGs")
+    all_cags = {
+        gene_name: gene_group
+        for gene_name, gene_group in pool.map(
+            greedy_complete_linkage_clustering,
+            [
+                (
+                    gene_name,
+                    gene_ix,
+                    candidate_groups[gene_ix],
+                    df.loc[candidate_groups[gene_ix]],
+                    max_dist
+                )
+                for gene_ix, gene_name in enumerate(df.index.values)
+            ]
+        )
+    }
+
+    logging.info("Done performing complete linkage clustering")
 
     # Order the genes by the number of neighbors (descending)
     n_neighbors_per_gene = {
         gene_id: len(neighbors)
         for gene_id, neighbors in all_cags.items()
     }
-    all_genes = sorted(df.index.values, key=n_neighbors_per_gene.get, reverse=True)
+    all_genes = sorted(
+        df.index.values, key=n_neighbors_per_gene.get, reverse=True)
 
     # Now find the smallest set of CAGs which cover the largest number of genes
     logging.info("Picking non-overlapping CAGs from the complete set")
@@ -341,7 +404,8 @@ def make_cags_with_ann(
 
     # Basic sanity checks
     assert all([len(v) > 0 for v in cags.values()])
-    assert sum(map(len, cags.values())) == df.shape[0], (sum(map(len, cags.values())), df.shape[0])
+    assert sum(map(len, cags.values())) == df.shape[0], (sum(
+        map(len, cags.values())), df.shape[0])
 
     return cags
 
@@ -358,16 +422,11 @@ def find_cags(
     gene_id_key="id",
     threads=1,
     min_samples=1,
-    iterations=1,
-    test=False
+    test=False,
+    clr_floor=None,
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
-
-    # The number of iterations can't be below 1 or above 999
-    assert isinstance(iterations, int)
-    assert iterations >= 1
-    assert iterations <= 999
 
     # Make a new temp folder
     temp_folder = os.path.join(temp_folder, str(uuid.uuid4())[:8])
@@ -390,6 +449,11 @@ def find_cags(
     consoleHandler.setFormatter(logFormatter)
     rootLogger.addHandler(consoleHandler)
 
+    # Set up the multiprocessing pool
+    pool = Pool(threads)
+
+    # READING IN DATA
+
     # Read in the sample_sheet
     logging.info("Reading in the sample sheet from " + sample_sheet)
     try:
@@ -404,15 +468,26 @@ def find_cags(
             sample_sheet,
             results_key,
             abundance_key,
-            gene_id_key,
-            normalization
+            gene_id_key
         )
     except:
         exit_and_clean_up(temp_folder)
 
+    # NORMALIZING RAW ABUNDANCES
+
+    # Normalize the raw depth abundances
+    try:
+        df = normalize_abundance_dataframe(df, normalization)
+    except:
+        exit_and_clean_up(temp_folder)
+
+    # Make a copy of this abundance table, to be saved at the end
+    unfiltered_abundance_df = copy.deepcopy(df)
+
     # If min_samples > 1, subset the genes
     if min_samples > 1:
-        logging.info("Subsetting to genes found in at least {} samples".format(min_samples))
+        logging.info(
+            "Subsetting to genes found in at least {} samples".format(min_samples))
 
         # Keep track of the number of genes filtered, and the time elapsed
         n_before_filtering = df.shape[0]
@@ -433,83 +508,64 @@ def find_cags(
         logging.info("Running in testing mode, subset to 2,000 genes")
         df = df.head(2000)
 
-    # Make a dummy set of CAGs that link each protein to itself
-    previous_cags = {
-        protein_id: [protein_id]
-        for protein_id in df.index.values
-    }
-    summary_df = df.copy()
+    # Apply the clr_floor parameter, if applicable
+    if clr_floor is not None and normalization == "clr":
+        logging.info("Applying the CLR floor: {}".format(clr_floor))
+        df = df.applymap(lambda v: v if v > clr_floor else clr_floor)
 
-    # Make CAGs iteratively until they are all used up
-    for iteration_ix in range(iterations):
-        logging.info("Starting iteration {}".format(iteration_ix + 1))
+    # Make sure that the lowest abundance is 0 (for clustering)
+    logging.info("Setting the lowest abundance as 0")
+    df = df - df.min().min()
 
-        # Make the nmslib index
-        index = make_nmslib_index(summary_df)
+    # CLUSTERING
 
-        # Make CAGs using the approximate nearest neighbor
+    # Make the nmslib index
+    logging.info("Making the nmslib index")
+    index = make_nmslib_index(df)
+
+    logging.info("Finding CAGs")
+    # Make CAGs using the approximate nearest neighbor
+    try:
         cags = make_cags_with_ann(
             index,
             max_dist,
-            summary_df,
+            df,
+            pool,
             threads=threads
         )
+    except:
+        exit_and_clean_up(temp_folder)
 
-        # Make sure that every member of this set of CAGs was the cag_id from the last round
-        previous_cag_names = set(list(previous_cags.keys()))
-        assert all([
-            cag_member in previous_cag_names
-            for cag_member_list in cags.values()
-            for cag_member in cag_member_list
-        ])
+    # Print the number of total CAGs, number of singletons, etc.
+    logging.info("Number of CAGs = {:,}".format(
+        len(cags)
+    ))
+    # Print the number of total CAGs, number of singletons, etc.
+    logging.info("Number of singletons = {:,} / {:,}".format(
+        sum([len(v) == 1 for v in cags.values()]),
+        sum(map(len, cags.values()))
+    ))
+    # Print the number of total CAGs, number of singletons, etc.
+    logging.info("Largest CAG = {:,}".format(
+        max(map(len, cags.values()))
+    ))
 
-        # Replace the names of the members of the CAGs with the names from the previous round
-        logging.info("Mapping names of CAGs from previous round")
-        cags = {
-            cag_id: [
-                previous_cag_member
-                for cag_member in cag_members
-                for previous_cag_member in previous_cags[cag_member]
-            ]
-            for cag_id, cag_members in cags.items()
-        }
+    logging.info("Size distribution of CAGs:")
+    logging.info(pd.Series(list(map(len, cags.values()))).describe())
 
-        # Check and see if the number of CAGs is smaller than the last round
-        assert len(cags) <= len(previous_cags)
-        if len(cags) == len(previous_cags):
-            logging.info("No additional linkages found, stopping iteration")
-            break
+    logging.info("Largest CAGs:")
+    largest_cags = pd.Series(dict(zip(
+        cags.keys(),
+        map(len, cags.values())
+    )))
+    largest_cags.sort_values(ascending=False, inplace=True)
+    for cag_id, cag_size in largest_cags.head(10).items():
+        logging.info("{}: {:,}".format(cag_id, cag_size))
 
-        # Print the number of total CAGs, number of singletons, etc.
-        logging.info("Iteration {}: Number of CAGs = {:,}".format(
-            iteration_ix + 1, len(cags)
-        ))
-        # Print the number of total CAGs, number of singletons, etc.
-        logging.info("Iteration {}: Number of singletons = {:,} / {:,}".format(
-            iteration_ix + 1,
-            sum([len(v) == 1 for v in cags.values()]),
-            sum(map(len, cags.values()))
-        ))
-        # Print the number of total CAGs, number of singletons, etc.
-        logging.info("Iteration {}: Largest CAG = {:,}".format(
-            iteration_ix + 1, max(map(len, cags.values()))
-        ))
+    # RETURN RESULTS
 
-        logging.info("Size distribution of CAGs:")
-        logging.info(pd.Series(list(map(len, cags.values()))).describe())
-
-        logging.info("Largest CAGs:")
-        largest_cags = pd.Series(dict(zip(
-            cags.keys(),
-            map(len, cags.values())
-        )))
-        largest_cags.sort_values(ascending=False, inplace=True)
-        for cag_id, cag_size in largest_cags.head(10).items():
-            logging.info("{}: {:,}".format(cag_id, cag_size))
-
-        # Now make a summary DF with the mean value for each combined CAG
-        summary_df = make_summary_abund_df(df, cags)
-        previous_cags = copy.deepcopy(cags)
+    # Now make a summary DF with the mean value for each combined CAG
+    summary_df = make_summary_abund_df(unfiltered_abundance_df, cags)
 
     # Read in the logs
     logs = "\n".join(open(log_fp, "rt").readlines())
@@ -518,7 +574,14 @@ def find_cags(
     logging.info("Returning results to " + output_folder)
     try:
         return_results(
-            df, summary_df, cags, logs, output_prefix, output_folder, temp_folder)
+            unfiltered_abundance_df,
+            summary_df,
+            cags,
+            logs,
+            output_prefix,
+            output_folder,
+            temp_folder
+        )
     except:
         exit_and_clean_up(temp_folder)
 
@@ -569,10 +632,6 @@ if __name__ == "__main__":
                         type=str,
                         default="id",
                         help="Key identifying the gene ID for each element in the results list.")
-    parser.add_argument("--iterations",
-                        type=int,
-                        default=1,
-                        help="Number of iterations to run.")
     parser.add_argument("--threads",
                         type=int,
                         default=1,
@@ -581,6 +640,10 @@ if __name__ == "__main__":
                         type=int,
                         default=1,
                         help="Filter genes by the number of samples they are found in.")
+    parser.add_argument("--clr-floor",
+                        type=float,
+                        default=None,
+                        help="Set the floor for the CLR as -1 (median / 10.).")
     parser.add_argument("--test",
                         action="store_true",
                         help="Run in testing mode and only process a subset of 2,000 genes.")
