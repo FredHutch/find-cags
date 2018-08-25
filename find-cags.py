@@ -293,6 +293,12 @@ def greedy_complete_linkage_clustering(input_data):
     return central_gene, cluster
 
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
+
 def make_cags_with_ann(
     index,
     max_dist,
@@ -347,22 +353,28 @@ def make_cags_with_ann(
 
     # Now find the optimized CAGs with complete linkage
     logging.info("Finding optimized CAGs")
-    all_cags = {
-        gene_name: gene_group
-        for gene_name, gene_group in pool.map(
-            greedy_complete_linkage_clustering,
-            [
-                (
-                    gene_name,
-                    gene_ix,
-                    candidate_groups[gene_ix],
-                    df.loc[candidate_groups[gene_ix]],
-                    max_dist
+    all_cags = {}
+    # Iterate over chunks of the data
+    for gene_ix_list in chunks(range(df.shape[0]), threads * 10):
+        all_cags = {
+            **all_cags,
+            **{
+                gene_name: gene_group
+                for gene_name, gene_group in pool.map(
+                    greedy_complete_linkage_clustering,
+                    [
+                        (
+                            df.index.values[gene_ix],
+                            gene_ix,
+                            candidate_groups[gene_ix],
+                            df.loc[candidate_groups[gene_ix]],
+                            max_dist
+                        )
+                        for gene_ix in gene_ix_list
+                    ]
                 )
-                for gene_ix, gene_name in enumerate(df.index.values)
-            ]
-        )
-    }
+            }
+        }
 
     logging.info("Done performing complete linkage clustering")
 
