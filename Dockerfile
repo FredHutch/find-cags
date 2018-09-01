@@ -10,6 +10,7 @@ RUN pip3 install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 feather-format nmslib
 
 # Add the script to the PATH
 ADD ./find-cags.py /usr/local/bin/
+ADD ./make-cag-feather.py /usr/local/bin/
 
 RUN mkdir /scratch
 
