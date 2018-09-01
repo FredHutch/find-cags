@@ -5,6 +5,11 @@
   [[ "$v" =~ "Find a set of co-abundant genes" ]]
 }
 
+@test "make-cag-feather.py in the PATH" {
+  v="$(make-cag-feather.py -h 2>&1 || true )"
+  [[ "$v" =~ "make a feather file" ]]
+}
+
 @test "Analyze test dataset" {
   find-cags.py \
     --sample-sheet /usr/local/tests/sample_sheet_docker.json \
