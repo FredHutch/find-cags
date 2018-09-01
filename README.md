@@ -132,3 +132,43 @@ optional arguments:
   --test                Run in testing mode and only process a subset of 2,000
                         genes.
   ```
+
+#### Helper Scripts
+
+```
+usage: make-cag-feather.py [-h] --cag-json-fp CAG_JSON_FP --sample-sheet
+                           SAMPLE_SHEET --output-prefix OUTPUT_PREFIX
+                           --output-folder OUTPUT_FOLDER
+                           [--normalization NORMALIZATION]
+                           [--temp-folder TEMP_FOLDER]
+                           [--results-key RESULTS_KEY]
+                           [--abundance-key ABUNDANCE_KEY]
+                           [--gene-id-key GENE_ID_KEY]
+
+Read in a set of samples and make a feather file with the CAG abundances
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --cag-json-fp CAG_JSON_FP
+                        Location for CAGs (.json[.gz]).
+  --sample-sheet SAMPLE_SHEET
+                        Location for sample sheet (.json[.gz]).
+  --output-prefix OUTPUT_PREFIX
+                        Prefix for output files.
+  --output-folder OUTPUT_FOLDER
+                        Folder to place results. (Supported: s3://, or local
+                        path).
+  --normalization NORMALIZATION
+                        Normalization factor per-sample (median, sum, or clr).
+  --temp-folder TEMP_FOLDER
+                        Folder for temporary files.
+  --results-key RESULTS_KEY
+                        Key identifying the list of gene abundances for each
+                        sample JSON.
+  --abundance-key ABUNDANCE_KEY
+                        Key identifying the abundance value for each element
+                        in the results list.
+  --gene-id-key GENE_ID_KEY
+                        Key identifying the gene ID for each element in the
+                        results list.
+```
