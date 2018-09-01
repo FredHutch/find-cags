@@ -150,14 +150,14 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
 
 def make_summary_abund_df(df, cags):
     """Make a DataFrame with the average value for each CAG."""
-    # Make sure that the members of every cag are rows in the `df`
-    row_names = set(df.index.values)
-    assert all([
-        cag_member in row_names
-        for cag_member_list in cags.values()
-        for cag_member in cag_member_list
-    ])
+    # Add back in any genes that are missing
+    df = df.reindex([
+        gene_id
+        for gene_id_list in cags.values()
+        for gene_id in gene_id_list
+    ], fill_value=df.min().min())
 
+    # Take the geometric mean per CAG
     summary_df = pd.DataFrame({
         cag_ix: df.loc[cag].mean()
         for cag_ix, cag in cags.items()
