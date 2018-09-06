@@ -26,3 +26,15 @@
   [[ -s /usr/local/tests/test.cags.json.gz ]]
   [[ -s /usr/local/tests/test.logs.txt ]]
 }
+
+
+@test "Make HDF5" {
+  make-depth-clr-hdf5.py \
+    --sample-sheet /usr/local/tests/sample_sheet_docker.json \
+    --output-prefix test \
+    --output-folder /usr/local/tests/ \
+    --temp-folder /scratch
+
+  # Make sure the output files exist
+  [[ -s /usr/local/tests/test.hdf5 ]]
+}
