@@ -529,6 +529,15 @@ def find_cags(
     logging.info("Setting the lowest abundance as 0")
     df = df - df.min().min()
 
+    # Get rid of any genes that do not rise above the floor
+    ix = df.max(axis=1) > df.min().min()
+    logging.info("{:,} / {:,} genes are found above an abundance of {:,}".format(
+        ix.sum(),
+        ix.shape[0],
+        df.min().min()
+    ))
+    df = df.loc[ix]
+
     # CLUSTERING
 
     # Make the nmslib index
@@ -655,7 +664,7 @@ if __name__ == "__main__":
     parser.add_argument("--clr-floor",
                         type=float,
                         default=None,
-                        help="Set the floor for the CLR as -1 (median / 10.).")
+                        help="Set the floor for the CLR as -1 (gmean / 10.).")
     parser.add_argument("--test",
                         action="store_true",
                         help="Run in testing mode and only process a subset of 2,000 genes.")

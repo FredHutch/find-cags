@@ -95,8 +95,9 @@ usage: find-cags.py [-h] --sample-sheet SAMPLE_SHEET --output-prefix
                     [--normalization NORMALIZATION] [--max-dist MAX_DIST]
                     [--temp-folder TEMP_FOLDER] [--results-key RESULTS_KEY]
                     [--abundance-key ABUNDANCE_KEY]
-                    [--gene-id-key GENE_ID_KEY] [--iterations ITERATIONS]
-                    [--threads THREADS] [--min-samples MIN_SAMPLES] [--test]
+                    [--gene-id-key GENE_ID_KEY] [--threads THREADS]
+                    [--min-samples MIN_SAMPLES] [--clr-floor CLR_FLOOR]
+                    [--test]
 
 Find a set of co-abundant genes
 
@@ -123,14 +124,15 @@ optional arguments:
   --gene-id-key GENE_ID_KEY
                         Key identifying the gene ID for each element in the
                         results list.
-  --iterations ITERATIONS
-                        Number of iterations to run.
   --threads THREADS     Number of threads to use.
   --min-samples MIN_SAMPLES
                         Filter genes by the number of samples they are found
                         in.
+  --clr-floor CLR_FLOOR
+                        Set the floor for the CLR as -1 (gmean / 10.).
   --test                Run in testing mode and only process a subset of 2,000
                         genes.
+
   ```
 
 #### Helper Scripts
