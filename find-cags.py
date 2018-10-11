@@ -496,47 +496,48 @@ def find_cags(
     # Make a copy of this abundance table, to be saved at the end
     unfiltered_abundance_df = copy.deepcopy(df)
 
+    # Apply the clr_floor parameter, if applicable
+    if clr_floor is not None and normalization == "clr":
+        if clr_floor == "auto":
+            clr_floor = df.min().max()
+            logging.info("Automatically set the minimum CLR as {:,}".format(clr_floor))
+        else:
+            logging.info("User passed in {:,} as the minimum CLR value".format(clr_floor))
+            try:
+                clr_floor = float(clr_floor)
+            except:
+                logging.info("{:,} could not be evaluated as a float".format(clr_floor))
+                exit_and_clean_up(temp_folder)
+
+        logging.info("Applying the CLR floor: {}".format(clr_floor))
+        df = df.applymap(lambda v: v if v > clr_floor else clr_floor)
+
     # If min_samples > 1, subset the genes
-    if min_samples > 1:
-        logging.info(
-            "Subsetting to genes found in at least {} samples".format(min_samples))
+    logging.info(
+        "Subsetting to genes found in at least {} samples".format(min_samples))
 
-        # Keep track of the number of genes filtered, and the time elapsed
-        n_before_filtering = df.shape[0]
-        start_time = time.time()
+    # Keep track of the number of genes filtered, and the time elapsed
+    n_before_filtering = df.shape[0]
+    start_time = time.time()
 
-        # Filter
-        df = df.loc[(df > df.min().min()).sum(axis=1) >= min_samples]
+    # Filter
+    df = df.loc[(df > df.min().min()).sum(axis=1) >= min_samples]
 
-        logging.info("{:,} / {:,} genes found in >= {:,} samples ({:,} seconds elapsed)".format(
-            df.shape[0],
-            n_before_filtering,
-            min_samples,
-            round(time.time() - start_time, 2)
-        ))
+    logging.info("{:,} / {:,} genes found in >= {:,} samples ({:,} seconds elapsed)".format(
+        df.shape[0],
+        n_before_filtering,
+        min_samples,
+        round(time.time() - start_time, 2)
+    ))
 
     # If this is being run in testing mode, subset to 2,000 genes
     if test:
         logging.info("Running in testing mode, subset to 2,000 genes")
         df = df.head(2000)
 
-    # Apply the clr_floor parameter, if applicable
-    if clr_floor is not None and normalization == "clr":
-        logging.info("Applying the CLR floor: {}".format(clr_floor))
-        df = df.applymap(lambda v: v if v > clr_floor else clr_floor)
-
     # Make sure that the lowest abundance is 0 (for clustering)
-    logging.info("Setting the lowest abundance as 0")
+    logging.info("Shifting the lowest abundance to 0 (for the purpose of calculating distance metrics)")
     df = df - df.min().min()
-
-    # Get rid of any genes that do not rise above the floor
-    ix = df.max(axis=1) > df.min().min()
-    logging.info("{:,} / {:,} genes are found above an abundance of {:,}".format(
-        ix.sum(),
-        ix.shape[0],
-        df.min().min()
-    ))
-    df = df.loc[ix]
 
     # CLUSTERING
 
@@ -662,9 +663,9 @@ if __name__ == "__main__":
                         default=1,
                         help="Filter genes by the number of samples they are found in.")
     parser.add_argument("--clr-floor",
-                        type=float,
+                        type=str,
                         default=None,
-                        help="Set the floor for the CLR as -1 (gmean / 10.).")
+                        help="Set a minimum CLR value, 'auto' will use the largest minimum value.")
     parser.add_argument("--test",
                         action="store_true",
                         help="Run in testing mode and only process a subset of 2,000 genes.")
