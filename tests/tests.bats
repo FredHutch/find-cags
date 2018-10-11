@@ -34,7 +34,14 @@
     --output-prefix test \
     --output-folder /usr/local/tests/ \
     --temp-folder /scratch
+    --normalization clr \
+    --max-dist 0.2 \
+    --threads 1 \
+    --clr-floor auto \
+    --test
 
   # Make sure the output files exist
-  [[ -s /usr/local/tests/test.hdf5 ]]
+  [[ -s /usr/local/tests/test_clr_floor.feather ]]
+  [[ -s /usr/local/tests/test_clr_floor.cags.json.gz ]]
+  [[ -s /usr/local/tests/test_clr_floor.logs.txt ]]
 }
