@@ -27,13 +27,12 @@
   [[ -s /usr/local/tests/test.logs.txt ]]
 }
 
-
-@test "Make HDF5" {
-  make-depth-clr-hdf5.py \
+@test "Analyze test dataset with automatic CLR floor" {
+  find-cags.py \
     --sample-sheet /usr/local/tests/sample_sheet_docker.json \
-    --output-prefix test \
+    --output-prefix test_clr_floor \
     --output-folder /usr/local/tests/ \
-    --temp-folder /scratch
+    --temp-folder /scratch \
     --normalization clr \
     --max-dist 0.2 \
     --threads 1 \
