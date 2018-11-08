@@ -342,9 +342,23 @@ def make_cags_with_ann(
             didnt_find_self += 1
             first_order_gene_neighbors.append(gene_ix)
 
+        # Go through and find the second order nearest neighbors
+        second_order_gene_neighbors = set([])
+        for first_order_ix in first_order_gene_neighbors:
+            second_order_gene_neighbors.add(first_order_ix)
+            
+            second_order_gene_neighbors |= set([
+                ix
+                for ix, d in zip(
+                    nearest_neighbors[first_order_ix][0],
+                    nearest_neighbors[first_order_ix][1]
+                )
+                if d < max_dist
+            ])
+
         candidate_groups.append([
             df.index.values[ix]
-            for ix in first_order_gene_neighbors
+            for ix in list(second_order_gene_neighbors)
         ])
 
     logging.info("Didn't recall self for {:,} / {:,} genes".format(
