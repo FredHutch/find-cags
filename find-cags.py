@@ -245,9 +245,10 @@ def greedy_complete_linkage_clustering(input_data):
     central_gene, nearest_neighbors, df, max_dist = input_data
 
     # Get the first and second order connections
-    gene_names = set()
+    gene_names = set([central_gene])
     for first_order_connection in nearest_neighbors[central_gene]:
         if first_order_connection in nearest_neighbors:
+            gene_names.add(first_order_connection)
             gene_names |= nearest_neighbors[first_order_connection]
     gene_names = gene_names & set(df.index.values)
     gene_names = list(gene_names)
@@ -471,7 +472,7 @@ def find_cags(
             clr_floor = df.min().max()
             logging.info("Automatically set the minimum CLR as {:,}".format(clr_floor))
         else:
-            logging.info("User passed in {:,} as the minimum CLR value".format(clr_floor))
+            logging.info("User passed in {} as the minimum CLR value".format(clr_floor))
             try:
                 clr_floor = float(clr_floor)
             except:
