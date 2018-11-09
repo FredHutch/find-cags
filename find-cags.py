@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import gmean
 from multiprocessing import Pool
-from scipy.spatial.distance import cdist
+from scipy.cluster.hierarchy import linkage, fcluster
 
 
 def exit_and_clean_up(temp_folder):
@@ -239,73 +239,63 @@ def make_nmslib_index(df):
     return index
 
 
-def greedy_complete_linkage_clustering(input_data):
-    """Use a greedy approach to get the complete linkage group connected to the central gene."""
+def get_gene_neighborhood(input_data):
+    """
+    Return the gene neighborhood for a particular gene.
+    
+    `nearest_neighbors`: A dict with the set of nearest neighbors, keyed by gene.
+    `central_gene`: The primary gene to consider.
+    `genes_remaining`: The set of genes that are remaining at this point of the analysis.
 
-    central_gene, nearest_neighbors, df, max_dist = input_data
+    Return the second order neighbors of the central gene (as a set).
+    """
+
+    central_gene, nearest_neighbors, genes_remaining = input_data
+
+    if central_gene not in nearest_neighbors:
+        return set()
 
     # Get the first and second order connections
-    gene_names = set([central_gene])
+    neighborhood = set([central_gene])
     for first_order_connection in nearest_neighbors[central_gene]:
         if first_order_connection in nearest_neighbors:
-            gene_names.add(first_order_connection)
-            gene_names |= nearest_neighbors[first_order_connection]
-    gene_names = gene_names & set(df.index.values)
-    gene_names = list(gene_names)
+            neighborhood.add(first_order_connection)
+            neighborhood |= nearest_neighbors[first_order_connection]
+    neighborhood = neighborhood & genes_remaining
 
-    # Singletons
-    if len(gene_names) == 1:
-        return set(gene_names)
-
-    # Take the central gene out of the list of gene names
-    gene_names = [g for g in gene_names if g != central_gene]
-
-    # Calculate the distance of all genes against the central gene
-    central_gene_dists = {
-        g: d
-        for g, d in zip(
-            gene_names,
-            cdist(
-                df.reindex(index=[central_gene]),
-                df.reindex(gene_names), 
-                metric="cosine"
-            )[0]
-        )
-    }
-
-    # Sort the genes by their closeness to the central one
-    gene_names = sorted(gene_names, key=central_gene_dists.get)
-
-    # Start the cluster
-    cluster = [central_gene]
-
-    # Add to the cluster until we're out
-    for g in gene_names:
-
-        # Skip genes that aren't close enough to the central gene
-        if central_gene_dists[g] >= max_dist:
-            continue
-
-        # Keep track of whether this should be added to the cluster
-        add_to_cluster = True
-
-        # Check the distance against every member of the cluster
-        for d in cdist(df.loc[[g]], df.loc[cluster], metric="cosine")[0]:
-            if d >= max_dist:
-                add_to_cluster = False
-                break
-
-        # Only add the gene if it's within the threshold for all previous genes
-        if add_to_cluster:
-            cluster.append(g)
-
-    return set(cluster)
+    return neighborhood
 
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
+def complete_linkage_clustering(input_data):
+    """Return the largest complete linkage group in this set of genes."""
+
+    df, max_dist, distance_metric, linkage_type = input_data
+
+    if df.shape[0] == 1:
+        return set(df.index.values)
+
+    # Compute the linkage (this will also calculate the pairwise distances)
+    l = linkage(
+        df,
+        method=linkage_type,
+        metric=distance_metric,
+    )
+    # Get the flat clusters
+    flat_clusters = fcluster(l, max_dist, criterion="distance")
+
+    # Reformat the clusters as a list of lists
+    clusters = [
+        [] for ix in range(flat_clusters.max() + 1)
+    ]
+    for cluster_ix, gene_name in zip(
+        flat_clusters, df.index.values
+    ):
+        clusters[cluster_ix].append(gene_name)
+    # Sort by size
+    clusters = sorted(clusters, key=len, reverse=True)
+
+    # Return the largest cluster (or the one that is tied for the largest)
+    return set(clusters[0])
 
 
 def make_cags_with_ann(
@@ -314,7 +304,9 @@ def make_cags_with_ann(
     df,
     pool,
     threads=1,
-    starting_n_neighbors=1000
+    starting_n_neighbors=1000,
+    distance_metric="cosine",
+    linkage_type="average"
 ):
     """Make CAGs using the approximate nearest neighbor"""
 
@@ -354,20 +346,27 @@ def make_cags_with_ann(
     while len(genes_remaining) > 0:
 
         # Get some of the advantages of parallel processing
+
+        # Find the linkage clusters in parallel
         for linkage_cluster in pool.imap_unordered(
-            greedy_complete_linkage_clustering,
+            complete_linkage_clustering,
             [
                 (
-                    gene_name,
-                    nearest_neighbors,
-                    df,
-                    max_dist
+                    df.reindex(index=list(get_gene_neighborhood((
+                        central_gene,
+                        nearest_neighbors,
+                        genes_remaining
+                    )))),
+                    max_dist, 
+                    distance_metric, 
+                    linkage_type
                 )
-                for gene_name in np.random.choice(list(genes_remaining), threads * 2)
+                for central_gene in np.random.choice(list(genes_remaining), threads * 4)
             ]
         ):
             # Make sure that every member of this cluster still needs to be clustered
-            if linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
+            if len(linkage_cluster) > 0 and linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
+
                 logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
                     len(linkage_cluster),
                     len(genes_remaining) - len(linkage_cluster)
@@ -406,6 +405,8 @@ def find_cags(
     min_samples=1,
     test=False,
     clr_floor=None,
+    distance_metric="cosine",
+    linkage_type="average"
 ):
     # Make sure the temporary folder exists
     assert os.path.exists(temp_folder)
@@ -521,9 +522,11 @@ def find_cags(
         cags = make_cags_with_ann(
             index,
             max_dist,
-            df,
+            df.copy(),
             pool,
-            threads=threads
+            threads=threads,
+            distance_metric=distance_metric,
+            linkage_type=linkage_type
         )
     except:
         exit_and_clean_up(temp_folder)
