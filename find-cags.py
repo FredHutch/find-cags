@@ -242,14 +242,19 @@ def make_nmslib_index(df):
 def greedy_complete_linkage_clustering(input_data):
     """Use a greedy approach to get the complete linkage group connected to the central gene."""
 
-    central_gene, central_gene_ix, gene_names, df, max_dist = input_data
+    central_gene, nearest_neighbors, df, max_dist = input_data
 
-    if central_gene_ix % 1000 == 0:
-        logging.info("Processing gene {:,}".format(central_gene_ix))
+    # Get the first and second order connections
+    gene_names = set()
+    for first_order_connection in nearest_neighbors[central_gene]:
+        if first_order_connection in nearest_neighbors:
+            gene_names |= nearest_neighbors[first_order_connection]
+    gene_names = gene_names & set(df.index.values)
+    gene_names = list(gene_names)
 
     # Singletons
     if len(gene_names) == 1:
-        return central_gene, gene_names
+        return set(gene_names)
 
     # Take the central gene out of the list of gene names
     gene_names = [g for g in gene_names if g != central_gene]
@@ -259,8 +264,11 @@ def greedy_complete_linkage_clustering(input_data):
         g: d
         for g, d in zip(
             gene_names,
-            cdist(df.loc[[central_gene]],
-                  df.loc[gene_names], metric="cosine")[0]
+            cdist(
+                df.reindex(index=[central_gene]),
+                df.reindex(gene_names), 
+                metric="cosine"
+            )[0]
         )
     }
 
@@ -290,7 +298,7 @@ def greedy_complete_linkage_clustering(input_data):
         if add_to_cluster:
             cluster.append(g)
 
-    return central_gene, cluster
+    return set(cluster)
 
 
 def chunks(l, n):
@@ -312,126 +320,73 @@ def make_cags_with_ann(
     # Get the nearest neighbors for every gene
     logging.info("Starting with the closest {:,} neighbors for all genes".format(
         starting_n_neighbors))
-    nearest_neighbors = index.knnQueryBatch(
-        df.values, k=starting_n_neighbors, num_threads=threads)
 
-    # Get the candidate groups for every gene
-    logging.info("Making candidate groups for every gene")
-    candidate_groups = []
-
-    didnt_find_self = 0
-    start_time = time.time()
-    for gene_ix, gene_name in enumerate(df.index.values):
-        if time.time() - start_time > 30:
-            logging.info("Processed {:,} / {:,} genes".format(
-                gene_ix, df.shape[0]
-            ))
-            start_time = time.time()
-
-        # Add all genes with distance < threshold to the first order connections
-        first_order_gene_neighbors = [
-            ix
-            for ix, d in zip(
-                nearest_neighbors[gene_ix][0],
-                nearest_neighbors[gene_ix][1]
+    # Format the nearest neighbors as a dict of sets
+    nearest_neighbors = {}
+    for gene_ix, gene_neighbors in enumerate(index.knnQueryBatch(
+        df.values,
+        k=starting_n_neighbors,
+        num_threads=threads
+    )):
+        nearest_neighbors[df.index.values[gene_ix]] = set([
+            df.index.values[neighbor_ix]
+            for neighbor_ix, neighbor_distance in zip(
+                gene_neighbors[0],
+                gene_neighbors[1]
             )
-            if d < max_dist
-        ]
-
-        if gene_ix not in first_order_gene_neighbors:
-            didnt_find_self += 1
-            first_order_gene_neighbors.append(gene_ix)
-
-        # Go through and find the second order nearest neighbors
-        second_order_gene_neighbors = set([])
-        for first_order_ix in first_order_gene_neighbors:
-            second_order_gene_neighbors.add(first_order_ix)
-            
-            second_order_gene_neighbors |= set([
-                ix
-                for ix, d in zip(
-                    nearest_neighbors[first_order_ix][0],
-                    nearest_neighbors[first_order_ix][1]
-                )
-                if d < max_dist
-            ])
-
-        candidate_groups.append([
-            df.index.values[ix]
-            for ix in list(second_order_gene_neighbors)
+            if neighbor_distance <= max_dist
         ])
 
-    logging.info("Didn't recall self for {:,} / {:,} genes".format(
-        didnt_find_self, df.shape[0]
-    ))
+    logging.info("Formatted nearest neighbors for every input gene")
 
-    # Now find the optimized CAGs with complete linkage
-    logging.info("Finding optimized CAGs")
-    all_cags = {}
-    # Iterate over chunks of the data
-    for gene_ix_list in chunks(range(df.shape[0]), threads * 10):
-        all_cags = {
-            **all_cags,
-            **{
-                gene_name: gene_group
-                for gene_name, gene_group in pool.map(
-                    greedy_complete_linkage_clustering,
-                    [
-                        (
-                            df.index.values[gene_ix],
-                            gene_ix,
-                            candidate_groups[gene_ix],
-                            df.loc[candidate_groups[gene_ix]],
-                            max_dist
-                        )
-                        for gene_ix in gene_ix_list
-                    ]
-                )
-            }
-        }
+    # Keep track of the number of genes that were input
+    n_genes_input = df.shape[0]
 
-    logging.info("Done performing complete linkage clustering")
-
-    # Order the genes by the number of neighbors (descending)
-    n_neighbors_per_gene = {
-        gene_id: len(neighbors)
-        for gene_id, neighbors in all_cags.items()
-    }
-    all_genes = sorted(
-        df.index.values, key=n_neighbors_per_gene.get, reverse=True)
-
-    # Now find the smallest set of CAGs which cover the largest number of genes
-    logging.info("Picking non-overlapping CAGs from the complete set")
-    # Store the CAGs as a dict of lists
+    # Find CAGs greedily, taking the complete linkage group for each gene in random order
     cags = {}
-    cag_ix = 1
+    cag_ix = 0
 
-    # Make a set with all of the genes that need to be clustered
-    to_cluster = set(all_genes)
+    # Keep track of which genes remain to be clustered
+    genes_remaining = set(list(df.index.values))
 
-    start_time = time.time()
+    # Keep clustering until everything is gone
+    while len(genes_remaining) > 0:
 
-    for gene_name in all_genes:
-        # Skip genes that are already in a CAG
-        if gene_name not in to_cluster:
-            continue
+        # Get some of the advantages of parallel processing
+        for linkage_cluster in pool.imap_unordered(
+            greedy_complete_linkage_clustering,
+            [
+                (
+                    gene_name,
+                    nearest_neighbors,
+                    df,
+                    max_dist
+                )
+                for gene_name in np.random.choice(list(genes_remaining), threads * 2)
+            ]
+        ):
+            # Make sure that every member of this cluster still needs to be clustered
+            if linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
+                logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
+                    len(linkage_cluster),
+                    len(genes_remaining) - len(linkage_cluster)
+                ))
 
-        # Get the genes linked to this one
-        new_cag = all_cags[gene_name]
-        # Filter to those genes which haven't been clustered yet
-        new_cag = list(set(new_cag) & to_cluster)
+                cags[cag_ix] = list(linkage_cluster)
+                cag_ix += 1
 
-        # Now remove this set of genes from the list that needs to be clustered
-        to_cluster -= set(new_cag)
-
-        # Add CAGs to the running list
-        cags["cag_{}".format(cag_ix)] = new_cag
-        cag_ix += 1
+                # Remove these genes from further consideration
+                genes_remaining = genes_remaining - linkage_cluster
+                df.drop(index=list(linkage_cluster), inplace=True)
+                for gene_name in list(linkage_cluster):
+                    if gene_name in nearest_neighbors:
+                        del nearest_neighbors[gene_name]
+                
 
     # Basic sanity checks
     assert all([len(v) > 0 for v in cags.values()])
-    assert sum(map(len, cags.values())) == df.shape[0], (sum(
-        map(len, cags.values())), df.shape[0])
+    assert sum(map(len, cags.values())) == n_genes_input, (sum(
+        map(len, cags.values())), n_genes_input)
 
     return cags
 
