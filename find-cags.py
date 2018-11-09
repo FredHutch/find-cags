@@ -409,57 +409,71 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
         pd.DataFrame({"cag": pd.Series(cag_dict)})
     ], axis=1).groupby("cag").mean()
 
-    # Compute the pairwise distances
-    logging.info("Computing pairwise distances")
-    distance_df = pd.DataFrame(
-        squareform(pdist(cag_df, metric=distance_metric)),
-        index=cag_df.index,
-        columns=cag_df.index
+    # Find the flat linkage clusters of the CAGs
+    logging.info("Finding groups of CAGs")
+    cag_clusters = fcluster(
+        linkage(
+            cag_df,
+            method=linkage_type,
+            metric=distance_metric,
+        ), 
+        max_dist, 
+        criterion="distance"
     )
 
-    # Check to see if any of the CAGs fall below the distance threshold
+    # Iterate over the groups of CAGs
+    for cag_cluster_ix in list(set(cag_clusters)):
+        # Check to see if multiple CAGs were grouped together
+        if (cag_clusters == cag_cluster_ix).sum() > 1:
 
-    # Don't join together CAGs which have already been joined
-    joined_cags = set([])
+            # Get the set of CAGs that will be regrouped
+            cags_to_regroup = [
+                cag_name
+                for cag_name, ix in zip(
+                    cag_df.index.values,
+                    cag_clusters
+                )
+                if ix == cag_cluster_ix
+            ]
 
-    # Iterate over every query CAG
-    for cag_1, cag_1_dist in distance_df.iterrows():
+            # Get the set of genes to regroup
+            genes_to_regroup = [
+                gene_name
+                for cag_name in cags_to_regroup
+                for gene_name in cags[cag_name]
+            ]
 
-        # Skip this CAG if we've already joined it
-        if cag_1 in joined_cags:
-            continue
+            logging.info("Regrouping a set of {:,} CAGs and {:,} genes".format(
+                len(cags_to_regroup),
+                len(genes_to_regroup)
+            ))
 
-        # Iterate over every other CAG, along with `d`, the distance between cag1 and cag2
-        for cag_2, d in cag_1_dist.sort_values().items():
+            # Make new groups
+            new_cags = fcluster(
+                linkage(
+                    df.reindex(index=genes_to_regroup),
+                    method=linkage_type,
+                    metric=distance_metric,
+                ),
+                max_dist,
+                criterion="distance"
+            )
 
-            # Only consider CAGs which that are closer together than max_dist
-            if cag_2 != cag_1 and d <= max_dist:
+            logging.info("Made a new set of {:,} CAGs".format(
+                len(set(new_cags))
+            ))
 
-                # Skip CAGs which have already been joined
-                if cag_2 in joined_cags:
-                    continue
+            # Remove the old CAGs
+            for cag_name in cags_to_regroup:
+                del cags[cag_name]
 
-                # Check to see if these CAGs are _completely_ overlapping
-                if genes_are_overlapping(
-                    df.reindex(index=cags[cag_1]),
-                    df.reindex(index=cags[cag_2]),
-                    max_dist, 
-                    distance_metric=distance_metric, 
-                    linkage_type=linkage_type
-                ):
-                    # Join together these two CAGs
-                    cags[cag_1] = cags[cag_1] + cags[cag_2]
-                    del cags[cag_2]
-
-                    # Make sure that we don't join these again
-                    joined_cags.add(cag_1)
-                    joined_cags.add(cag_2)
-
-                    logging.info("Joined {:,} pairs of CAGs".format(
-                        int(len(joined_cags) / 2)
-                    ))
-
-    return cags
+            # Add the new CAGs
+            new_cag_ix = 0
+            for cag_name, genes_in_cag in pd.Series(genes_to_regroup).groupby(new_cags):
+                while new_cag_ix in cags:
+                    new_cag_ix += 1
+                cags[new_cag_ix] = genes_in_cag.values.tolist()
+                new_cag_ix += 1
 
 
 def genes_are_overlapping(df1, df2, max_dist, distance_metric="cosine", linkage_type="average"):
@@ -481,8 +495,9 @@ def genes_are_overlapping(df1, df2, max_dist, distance_metric="cosine", linkage_
 def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
     """Refine the CAGs by merging all groups that are overlapping."""
 
-    # Repeat until all overlapping CAGs are merged
+    # Repeat until all overlapping CAGs are merged, maxing out after a few iterations
     n_cags_previously = len(cags) + 1
+    n_iters = 0
     while n_cags_previously > len(cags):
 
         n_cags_previously = len(cags)
@@ -499,6 +514,11 @@ def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkag
         logging.info("Merging together {:,} CAGs yielded {:,} CAGs".format(
             n_cags_previously, len(cags)
         ))
+
+        n_iters += 1
+        if n_iters >= 5:
+            logging.info("Done merging together CAGs")
+            break
 
     logging.info("Returning a set of {:,} merged CAGs".format(len(cags)))
 
