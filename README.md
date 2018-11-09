@@ -33,6 +33,16 @@ Therefore the features that must be specified by the user are:
 
 **NOTE**: All abundance metric values must be >= 0
 
+
+#### Running from any DataFrame
+
+If you have any other format of data, you can use this code to find CAGs as well.
+At the moment, this isn't explicitly supported, but there are functions within the
+`find-cags.py` file that you can import and use directly. In the future it might
+be useful to extract this codebase as an installable module, but that has not been
+done yet.
+
+
 #### Sample Sheet
 
 To link individual files with sample names, the user will specify a
@@ -77,14 +87,16 @@ This implementation has a high performance in an independent
 
 #### Distance Metric
 
-The distance metric is now hard-coded to be the cosine similarity.
+The distance metric is now hard-coded to be the cosine similarity. This is limited by the
+available functionality of ANN in `nmslib`, and therefore has been standardized to the
+other parts of the codebase as well.
 
 
-#### Iterations
+#### Refinements
 
-The algorithm can be run iteratively, which may help with some of the noise and
-imperfect recall of the ANN algorithm. Use the `--iterations` flag to set the number
-of iterations to attemp (less than 1,000).
+After finding CAGs, the algorithm will iteratively join CAGs that are very similar to each
+other in aggregate. This increases the fidelity of the final CAGs and mitigates some of the
+sensitivity limitations of ANN.
 
 
 #### Invocation
@@ -129,7 +141,8 @@ optional arguments:
                         Filter genes by the number of samples they are found
                         in.
   --clr-floor CLR_FLOOR
-                        Set the floor for the CLR as -1 (gmean / 10.).
+                        Set a minimum CLR value, 'auto' will use the largest
+                        minimum value.
   --test                Run in testing mode and only process a subset of 2,000
                         genes.
 
