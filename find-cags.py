@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import gmean
 from multiprocessing import Pool
+from scipy.spatial.distance import pdist, squareform
 from scipy.cluster.hierarchy import linkage, fcluster
 
 
@@ -391,6 +392,117 @@ def make_cags_with_ann(
     return cags
 
 
+def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
+    """Check to see if any CAGs are overlapping. If so, join them and combine the result."""
+
+    # Make a dict linking each gene to its CAG
+    cag_dict = {
+        gene_id: cag_id
+        for cag_id, gene_id_list in cags.items()
+        for gene_id in gene_id_list
+    }
+
+    # Make a DF with the mean abundance of each CAG
+    logging.info("Computing mean abundances for {:,} CAGs and {:,} genes".format(len(cags), len(cag_dict)))
+    cag_df = pd.concat([
+        df,
+        pd.DataFrame({"cag": pd.Series(cag_dict)})
+    ], axis=1).groupby("cag").mean()
+
+    # Compute the pairwise distances
+    logging.info("Computing pairwise distances")
+    distance_df = pd.DataFrame(
+        squareform(pdist(cag_df, metric=distance_metric)),
+        index=cag_df.index,
+        columns=cag_df.index
+    )
+
+    # Check to see if any of the CAGs fall below the distance threshold
+
+    # Don't join together CAGs which have already been joined
+    joined_cags = set([])
+
+    # Iterate over every query CAG
+    for cag_1, cag_1_dist in distance_df.iterrows():
+
+        # Skip this CAG if we've already joined it
+        if cag_1 in joined_cags:
+            continue
+
+        # Iterate over every other CAG, along with `d`, the distance between cag1 and cag2
+        for cag_2, d in cag_1_dist.sort_values().items():
+
+            # Only consider CAGs which that are closer together than max_dist
+            if cag_2 != cag_1 and d <= max_dist:
+
+                # Skip CAGs which have already been joined
+                if cag_2 in joined_cags:
+                    continue
+
+                # Check to see if these CAGs are _completely_ overlapping
+                if genes_are_overlapping(
+                    df.reindex(index=cags[cag_1]),
+                    df.reindex(index=cags[cag_2]),
+                    max_dist, 
+                    distance_metric=distance_metric, 
+                    linkage_type=linkage_type
+                ):
+                    # Join together these two CAGs
+                    cags[cag_1] = cags[cag_1] + cags[cag_2]
+                    del cags[cag_2]
+
+                    # Make sure that we don't join these again
+                    joined_cags.add(cag_1)
+                    joined_cags.add(cag_2)
+
+                    logging.info("Joined {:,} pairs of CAGs".format(
+                        int(len(joined_cags) / 2)
+                    ))
+
+    return cags
+
+
+def genes_are_overlapping(df1, df2, max_dist, distance_metric="cosine", linkage_type="average"):
+    """Check to see if the two sets of genes are completely overlapping."""
+    
+    # Compute the linkage (this will also calculate the pairwise distances)
+    l = linkage(
+        pd.concat([df1, df2]),
+        method=linkage_type,
+        metric=distance_metric,
+    )
+    # Get the flat clusters
+    flat_clusters = fcluster(l, max_dist, criterion="distance")
+
+    # Return True if there is only a single cluster at this threshold
+    return len(set(flat_clusters)) == 1
+
+
+def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
+    """Refine the CAGs by merging all groups that are overlapping."""
+
+    # Repeat until all overlapping CAGs are merged
+    n_cags_previously = len(cags) + 1
+    while n_cags_previously > len(cags):
+
+        n_cags_previously = len(cags)
+
+        # Merge any overlapping CAGs
+        join_overlapping_cags(
+            cags,
+            df,
+            max_dist,
+            distance_metric=distance_metric,
+            linkage_type=linkage_type
+        )
+
+        logging.info("Merging together {:,} CAGs yielded {:,} CAGs".format(
+            n_cags_previously, len(cags)
+        ))
+
+    logging.info("Returning a set of {:,} merged CAGs".format(len(cags)))
+
+
 def find_cags(
     sample_sheet=None,
     output_prefix=None,
@@ -525,6 +637,21 @@ def find_cags(
             df.copy(),
             pool,
             threads=threads,
+            distance_metric=distance_metric,
+            linkage_type=linkage_type
+        )
+    except:
+        exit_and_clean_up(temp_folder)
+
+    logging.info("Closing the process pool")
+    pool.close()
+
+    # Refine the CAGs by merging overlapping groups
+    try:
+        iteratively_refine_cags(
+            cags,
+            df.copy(),
+            max_dist,
             distance_metric=distance_metric,
             linkage_type=linkage_type
         )
