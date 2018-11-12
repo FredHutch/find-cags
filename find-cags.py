@@ -315,33 +315,50 @@ def make_cags_with_ann(
     logging.info("Starting with the closest {:,} neighbors for all genes".format(
         starting_n_neighbors))
 
+    # Keep track of the genes that are singletons at this early stage
+    singletons = set()
+
+    # Keep track of which genes remain to be clustered
+    genes_remaining = set()
+
     # Format the nearest neighbors as a dict of sets
     nearest_neighbors = {}
+
+    # Iterate over every gene
     for gene_ix, gene_neighbors in enumerate(index.knnQueryBatch(
         df.values,
         k=starting_n_neighbors,
         num_threads=threads
     )):
-        nearest_neighbors[df.index.values[gene_ix]] = set([
+        gene_name = df.index.values[gene_ix]
+        nn = set([
             df.index.values[neighbor_ix]
             for neighbor_ix, neighbor_distance in zip(
                 gene_neighbors[0],
                 gene_neighbors[1]
             )
-            if neighbor_distance <= max_dist
+            if neighbor_distance <= (max_dist * 2)
         ])
+        if len(nn) > 1:
+            nearest_neighbors[gene_name] = nn
+            genes_remaining.add(gene_name)
+        else:
+            singletons.add(gene_name)
 
     logging.info("Formatted nearest neighbors for every input gene")
+    logging.info("Genes with neighbors: {:,} -- Singletons: {:,}".format(
+        len(nearest_neighbors), len(singletons)
+    ))
 
     # Keep track of the number of genes that were input
     n_genes_input = df.shape[0]
 
+    # Make sure that the number of genes adds up
+    assert n_genes_input == len(genes_remaining) + len(singletons)
+
     # Find CAGs greedily, taking the complete linkage group for each gene in random order
     cags = {}
     cag_ix = 0
-
-    # Keep track of which genes remain to be clustered
-    genes_remaining = set(list(df.index.values))
 
     # Keep clustering until everything is gone
     while len(genes_remaining) > 0:
@@ -383,6 +400,10 @@ def make_cags_with_ann(
                     if gene_name in nearest_neighbors:
                         del nearest_neighbors[gene_name]
                 
+    # Add in CAGs for the singletons
+    for gene_name in list(singletons):
+        cags[cag_ix] = list(gene_name)
+        cag_ix += 1
 
     # Basic sanity checks
     assert all([len(v) > 0 for v in cags.values()])
@@ -395,15 +416,18 @@ def make_cags_with_ann(
 def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
     """Check to see if any CAGs are overlapping. If so, join them and combine the result."""
 
-    # Make a dict linking each gene to its CAG
+    # Make a dict linking each gene to its CAG - omitting singletons
     cag_dict = {
         gene_id: cag_id
         for cag_id, gene_id_list in cags.items()
         for gene_id in gene_id_list
+        if len(gene_id_list) > 1
     }
 
     # Make a DF with the mean abundance of each CAG
-    logging.info("Computing mean abundances for {:,} CAGs and {:,} genes".format(len(cags), len(cag_dict)))
+    logging.info("Computing mean abundances for {:,} CAGs and {:,} genes (omitting singletons)".format(
+        len(set(cag_dict.values())), len(cag_dict)
+    ))
     cag_df = pd.concat([
         df,
         pd.DataFrame({"cag": pd.Series(cag_dict)})
