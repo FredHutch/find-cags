@@ -337,7 +337,7 @@ def make_cags_with_ann(
                 gene_neighbors[0],
                 gene_neighbors[1]
             )
-            if neighbor_distance <= (max_dist * 2)
+            if neighbor_distance <= max_dist
         ])
         if len(nn) > 1:
             nearest_neighbors[gene_name] = nn
