@@ -21,6 +21,7 @@ from scipy.stats import gmean
 from multiprocessing import Pool
 from scipy.spatial.distance import pdist
 from scipy.cluster.hierarchy import linkage, fcluster
+from functools import lrucache
 
 
 def exit_and_clean_up(temp_folder):
@@ -339,6 +340,7 @@ def find_flat_clusters(
     return flat_clusters
 
 
+@lru_cache(maxsize=None)
 def condensed_ix(x, y, n):
     """
     Function to convert the squareform index to the condensed index.
@@ -358,6 +360,7 @@ def condensed_ix(x, y, n):
     return int(n*y - y*(y+1)/2 + x - 1 - y)
 
 
+@lru_cache(maxsize=None)
 def condensed_row(x, y, n):
     """
     Function to convert a row from the squareform index into the condensed index.
