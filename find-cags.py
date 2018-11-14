@@ -21,7 +21,6 @@ from scipy.stats import gmean
 from multiprocessing import Pool
 from scipy.spatial.distance import pdist
 from scipy.cluster.hierarchy import linkage, fcluster
-import networkx as nx
 
 
 def exit_and_clean_up(temp_folder):
@@ -270,27 +269,6 @@ def get_gene_neighborhood(central_gene, nearest_neighbors, genes_remaining):
     return neighborhood
 
 
-def get_gene_neighborhood_nx(central_gene, G, genes_remaining):
-    """
-    Return the gene neighborhood for a particular gene.
-    
-    `G`: Networkx graph.
-    `central_gene`: The primary gene to consider.
-    `genes_remaining`: The set of genes that are remaining at this point of the analysis.
-
-    Return the second order neighbors of the central gene (as a set).
-    """
-
-    # Get the first and second order connections
-    neighborhood = set([central_gene])
-    for first_order_connection in G.neighbors(central_gene):
-        neighborhood.add(first_order_connection)
-        for second_order_connection in G.neighbors(first_order_connection):
-            neighborhood.add(second_order_connection)
-
-    return neighborhood
-
-
 def complete_linkage_clustering(input_data):
     """Return the largest complete linkage group in this set of genes."""
 
@@ -491,9 +469,6 @@ def make_cags_with_ann(
     # Format the nearest neighbors as a dict of sets
     nearest_neighbors = {}
 
-    # Format the nearest neighbors as a graph
-    G = nx.Graph(directed=False)
-
     # Calculate distances with ANN
     start_time = time.time()
     ann_distances = index.knnQueryBatch(
@@ -522,26 +497,6 @@ def make_cags_with_ann(
             singletons.add(gene_name)
     logging.info("Added nearest neighbors via dict: {:,} seconds".format(round(time.time() - start_time, 2)))
 
-    # Iterate over every gene - NETWORKX
-    start_time = time.time()
-    for gene_ix, gene_neighbors in enumerate(ann_distances):
-        gene_name = df.index.values[gene_ix]
-
-        is_singleton = True
-
-        for neighbor_ix, neighbor_distance in zip(
-            gene_neighbors[0],
-            gene_neighbors[1]
-        ):
-            if neighbor_distance <= max_dist and gene_ix != neighbor_ix:
-                G.add_edge(gene_name, df.index.values[neighbor_ix])
-                is_singleton = False
-
-        if is_singleton:
-            singletons.add(gene_name)
-
-    logging.info("Added nearest neighbors via NX: {:,} seconds".format(round(time.time() - start_time, 2)))
-
     # logging.info("Formatted nearest neighbors for every input gene")
     logging.info("Genes with neighbors: {:,} -- Singletons: {:,}".format(
         len(nearest_neighbors), len(singletons)
@@ -567,15 +522,6 @@ def make_cags_with_ann(
             genes_remaining
         )
         logging.info("Found a set of nearest neighbors via dict: {:,} seconds".format(
-            round(time.time() - start_time, 2)
-        ))
-
-        nearest_neighbor_list = get_gene_neighborhood_nx(
-            np.random.choice(list(genes_remaining), 1)[0],
-            G,
-            genes_remaining
-        )
-        logging.info("Found a set of nearest neighbors via NX: {:,} seconds".format(
             round(time.time() - start_time, 2)
         ))
 
