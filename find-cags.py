@@ -553,7 +553,7 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
         if len(gene_id_list) > 1
     }
 
-    if len(cag_dict) == 1:
+    if len(set(cag_dict.values())) == 1:
         logging.info("There is only 1 non-singleton CAG -- no need to cluster again")
         return
 
