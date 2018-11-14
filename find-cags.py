@@ -307,7 +307,8 @@ def find_flat_clusters(
     max_dist,
     linkage_type="average",
     distance_metric="cosine",
-    exhaustive_max_dim=10000
+    exhaustive_max_dim=10000,
+    threads=1
 ):
     """Find the set of flat clusters for a given set of observations."""
 
@@ -321,7 +322,7 @@ def find_flat_clusters(
         # Distance metric must be "cosine"
         assert distance_metric == "cosine", "ANN can only compute cosine at the moment"
 
-        dm = dm_from_ann(df)
+        dm = dm_from_ann(df, threads=threads)
         
     # Now compute the flat clusters
     start_time = time.time()
@@ -580,7 +581,7 @@ def make_cags_with_ann(
     return cags
 
 
-def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
+def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
     """Check to see if any CAGs are overlapping. If so, join them and combine the result."""
 
     # Make a dict linking each gene to its CAG - omitting singletons
@@ -611,6 +612,7 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
         max_dist,
         linkage_type=linkage_type,
         distance_metric=distance_metric,
+        threads=threads
     )
 
     # Iterate over the groups of CAGs
@@ -680,7 +682,7 @@ def genes_are_overlapping(df1, df2, max_dist, distance_metric="cosine", linkage_
     return len(set(flat_clusters)) == 1
 
 
-def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
+def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
     """Refine the CAGs by merging all groups that are overlapping."""
 
     # Repeat until all overlapping CAGs are merged, maxing out after a few iterations
@@ -696,7 +698,8 @@ def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkag
             df,
             max_dist,
             distance_metric=distance_metric,
-            linkage_type=linkage_type
+            linkage_type=linkage_type,
+            threads=threads
         )
 
         logging.info("Merging together {:,} CAGs yielded {:,} CAGs".format(
@@ -861,7 +864,8 @@ def find_cags(
             df.copy(),
             max_dist,
             distance_metric=distance_metric,
-            linkage_type=linkage_type
+            linkage_type=linkage_type,
+            threads=threads
         )
     except:
         exit_and_clean_up(temp_folder)
