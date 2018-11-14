@@ -10,6 +10,7 @@ import gzip
 import json
 import boto3
 import shutil
+import networkx as nx
 import nmslib
 import logging
 import argparse
@@ -240,29 +241,25 @@ def make_nmslib_index(df):
     return index
 
 
-def get_gene_neighborhood(input_data):
+def get_gene_neighborhood(central_gene, G):
     """
     Return the gene neighborhood for a particular gene.
     
-    `nearest_neighbors`: A dict with the set of nearest neighbors, keyed by gene.
+    `G`: A network the set of nearest neighbors.
     `central_gene`: The primary gene to consider.
-    `genes_remaining`: The set of genes that are remaining at this point of the analysis.
 
     Return the second order neighbors of the central gene (as a set).
     """
 
-    central_gene, nearest_neighbors, genes_remaining = input_data
-
-    if central_gene not in nearest_neighbors:
-        return set()
+    if central_gene not in G:
+        return set([])
 
     # Get the first and second order connections
     neighborhood = set([central_gene])
-    for first_order_connection in nearest_neighbors[central_gene]:
-        if first_order_connection in nearest_neighbors:
-            neighborhood.add(first_order_connection)
-            neighborhood |= nearest_neighbors[first_order_connection]
-    neighborhood = neighborhood & genes_remaining
+    for first_order_connection in G.neighbors(central_gene):
+        neighborhood.add(first_order_connection)
+        for second_order_connection in G.neighbors(first_order_connection):
+            neighborhood.add(second_order_connection)
 
     return neighborhood
 
@@ -321,8 +318,8 @@ def make_cags_with_ann(
     # Keep track of which genes remain to be clustered
     genes_remaining = set()
 
-    # Format the nearest neighbors as a dict of sets
-    nearest_neighbors = {}
+    # Make a graph to store the nearest neighbors
+    G = nx.Graph(directed=False)
 
     # Iterate over every gene
     for gene_ix, gene_neighbors in enumerate(index.knnQueryBatch(
@@ -331,23 +328,25 @@ def make_cags_with_ann(
         num_threads=threads
     )):
         gene_name = df.index.values[gene_ix]
-        nn = set([
+        nn = [
             df.index.values[neighbor_ix]
             for neighbor_ix, neighbor_distance in zip(
                 gene_neighbors[0],
                 gene_neighbors[1]
             )
             if neighbor_distance <= max_dist
-        ])
+        ]
         if len(nn) > 1:
-            nearest_neighbors[gene_name] = nn
+            for neighbor in nn:
+                G.add_edge(gene_name, neighbor)
+
             genes_remaining.add(gene_name)
         else:
             singletons.add(gene_name)
 
     logging.info("Formatted nearest neighbors for every input gene")
     logging.info("Genes with neighbors: {:,} -- Singletons: {:,}".format(
-        len(nearest_neighbors), len(singletons)
+        G.number_of_nodes(), len(singletons)
     ))
 
     # Keep track of the number of genes that were input
@@ -370,11 +369,10 @@ def make_cags_with_ann(
             complete_linkage_clustering,
             [
                 (
-                    df.reindex(index=list(get_gene_neighborhood((
+                    df.reindex(index=list(get_gene_neighborhood(
                         central_gene,
-                        nearest_neighbors,
-                        genes_remaining
-                    )))),
+                        G
+                    ))),
                     max_dist, 
                     distance_metric, 
                     linkage_type
@@ -397,9 +395,9 @@ def make_cags_with_ann(
                 genes_remaining = genes_remaining - linkage_cluster
                 df.drop(index=list(linkage_cluster), inplace=True)
                 for gene_name in list(linkage_cluster):
-                    if gene_name in nearest_neighbors:
-                        del nearest_neighbors[gene_name]
-                
+                    if gene_name in G:
+                        G.remove_node(gene_name)
+
     # Add in CAGs for the singletons
     for gene_name in list(singletons):
         cags[cag_ix] = list(gene_name)
