@@ -20,7 +20,8 @@ import pandas as pd
 from scipy.stats import gmean
 from multiprocessing import Pool
 from scipy.spatial.distance import pdist
-from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.cluster.hierarchy import fcluster
+from fastcluster import linkage
 from functools import lru_cache
 
 
