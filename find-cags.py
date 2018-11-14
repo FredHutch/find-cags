@@ -487,7 +487,9 @@ def make_cags_with_ann(
         k=starting_n_neighbors,
         num_threads=threads
     )
-    logging.info("Calculated ANN distances: {:,} seconds".format(round(time.time() - start_time, 2)))
+    logging.info("Calculated ANN distances: {:,} seconds".format(
+        round(time.time() - start_time, 2))
+    )
 
     # Iterate over every gene
     start_time = time.time()
@@ -506,9 +508,10 @@ def make_cags_with_ann(
             genes_remaining.add(gene_name)
         else:
             singletons.add(gene_name)
-    logging.info("Added nearest neighbors via dict: {:,} seconds".format(round(time.time() - start_time, 2)))
+    logging.info("Added nearest neighbors: {:,} seconds".format(
+        round(time.time() - start_time, 2))
+    )
 
-    # logging.info("Formatted nearest neighbors for every input gene")
     logging.info("Genes with neighbors: {:,} -- Singletons: {:,}".format(
         len(nearest_neighbors), len(singletons)
     ))
@@ -526,71 +529,44 @@ def make_cags_with_ann(
     # Keep clustering until everything is gone
     while len(genes_remaining) > 0:
 
-        start_time = time.time()
-        nearest_neighbor_list = get_gene_neighborhood(
-            np.random.choice(list(genes_remaining), 1)[0],
-            nearest_neighbors,
-            genes_remaining
-        )
-        logging.info("Found a set of nearest neighbors via dict: {:,} seconds".format(
-            round(time.time() - start_time, 2)
-        ))
+        # Find the linkage clusters in parallel
+        for linkage_cluster in pool.imap_unordered(
+            complete_linkage_clustering,
+            [
+                (
+                    df.reindex(index=list(get_gene_neighborhood((
+                        central_gene,
+                        nearest_neighbors,
+                        genes_remaining
+                    )))),
+                    max_dist, 
+                    distance_metric, 
+                    linkage_type
+                )
+                for central_gene in np.random.choice(list(genes_remaining), threads * 4)
+            ]
+        ):
 
-        # Pull out the values to cluster
-        start_time = time.time()
-        df_to_cluster = df.reindex(index=list(nearest_neighbor_list))
-        logging.info("Extracted values to use for clustering: {:,} seconds".format(
-            round(time.time() - start_time, 2)
-        ))
+            # Make sure that every member of this cluster still needs to be clustered
+            if len(linkage_cluster) > 0 and linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
 
-        # Find the linkage cluster
-        start_time = time.time()
-        linkage_cluster  = complete_linkage_clustering(
-            (
-                df_to_cluster,
-                max_dist, 
-                distance_metric, 
-                linkage_type
-            )
-        )
-        logging.info("Found largest linkage cluster: {:,} seconds".format(
-            round(time.time() - start_time, 2)
-        ))
+                logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
+                    len(linkage_cluster),
+                    len(genes_remaining) - len(linkage_cluster)
+                ))
 
-        # Make sure that every member of this cluster still needs to be clustered
-        if len(linkage_cluster) > 0 and linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
+                cags[cag_ix] = list(linkage_cluster)
+                cag_ix += 1
 
-            logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
-                len(linkage_cluster),
-                len(genes_remaining) - len(linkage_cluster)
-            ))
+                # Remove these genes from further consideration
+                genes_remaining = genes_remaining - linkage_cluster
 
-            cags[cag_ix] = list(linkage_cluster)
-            cag_ix += 1
-
-            # Remove these genes from further consideration
-            start_time = time.time()
-            genes_remaining = genes_remaining - linkage_cluster
-            logging.info("Removed cluster from `genes_remaining`: {:,} seconds".format(
-                round(time.time() - start_time, 2)
-            ))
-
-            start_time = time.time()
-            df.drop(index=list(linkage_cluster), inplace=True)
-            logging.info("Removed cluster from `df`: {:,} seconds".format(
-                round(time.time() - start_time, 2)
-            ))
-
-            start_time = time.time()
-            for gene_name in list(linkage_cluster):
-                if gene_name in nearest_neighbors:
-                    del nearest_neighbors[gene_name]
-            logging.info("Removed cluster from `nearest_neighbors`: {:,} seconds".format(
-                round(time.time() - start_time, 2)
-            ))
-
-        logging.info("")
+                df.drop(index=list(linkage_cluster), inplace=True)
                 
+                for gene_name in list(linkage_cluster):
+                    if gene_name in nearest_neighbors:
+                        del nearest_neighbors[gene_name]
+
     # Add in CAGs for the singletons
     for gene_name in list(singletons):
         cags[cag_ix] = [gene_name]
@@ -600,12 +576,6 @@ def make_cags_with_ann(
     assert all([len(v) > 0 for v in cags.values()])
     assert sum(map(len, cags.values())) == n_genes_input, (sum(
         map(len, cags.values())), n_genes_input)
-
-    # Rename the CAGs
-    cags = {
-        ix: list_of_genes
-        for ix, list_of_genes in enumerate(sorted(list(cags.values()), key=len, reverse=True))
-    }
 
     return cags
 
@@ -895,6 +865,12 @@ def find_cags(
         )
     except:
         exit_and_clean_up(temp_folder)
+    
+    # Rename the CAGs
+    cags = {
+        ix: list_of_genes
+        for ix, list_of_genes in enumerate(sorted(list(cags.values()), key=len, reverse=True))
+    }
 
     # Print the number of total CAGs, number of singletons, etc.
     logging.info("Number of CAGs = {:,}".format(
