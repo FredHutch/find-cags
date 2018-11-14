@@ -424,6 +424,10 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
         if len(gene_id_list) > 1
     }
 
+    if len(cag_dict) == 1:
+        logging.info("There is only 1 non-singleton CAG -- no need to cluster again")
+        return
+
     # Make a DF with the mean abundance of each CAG
     logging.info("Computing mean abundances for {:,} CAGs and {:,} genes (omitting singletons)".format(
         len(set(cag_dict.values())), len(cag_dict)
