@@ -324,7 +324,6 @@ def find_flat_clusters(
         dm = dm_from_ann(df, threads=threads)
         
     # Now compute the flat clusters
-    start_time = time.time()
     flat_clusters = fcluster(
         linkage(
             dm,
@@ -334,9 +333,6 @@ def find_flat_clusters(
         max_dist, 
         criterion="distance"
     )
-    logging.info("Found flat clusters: {:,} seconds elapsed".format(
-        round(time.time() - start_time, 2)
-    ))
 
     return flat_clusters
 
