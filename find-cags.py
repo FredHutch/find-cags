@@ -378,11 +378,32 @@ def make_cags_with_ann(
             round(time.time() - start_time, 2)
         ))
 
+        # Pull out the values to cluster
+        start_time = time.time()
+        df_to_cluster = df.reindex(index=list(nearest_neighbor_list))
+        logging.info("Extracted values to use for clustering: {:,} seconds".format(
+            round(time.time() - start_time, 2)
+        ))
+
         # Find the linkage cluster
         start_time = time.time()
         linkage_cluster  = complete_linkage_clustering(
             (
-                df.reindex(index=list(nearest_neighbor_list)),
+                df_to_cluster,
+                max_dist, 
+                distance_metric, 
+                linkage_type
+            )
+        )
+        logging.info("Found largest linkage cluster: {:,} seconds".format(
+            round(time.time() - start_time, 2)
+        ))
+
+        # Find the linkage cluster
+        start_time = time.time()
+        linkage_cluster  = complete_linkage_clustering(
+            (
+                df_to_cluster,
                 max_dist, 
                 distance_metric, 
                 linkage_type
@@ -423,6 +444,8 @@ def make_cags_with_ann(
             logging.info("Removed cluster from `nearest_neighbors`: {:,} seconds".format(
                 round(time.time() - start_time, 2)
             ))
+
+        logging.info("")
                 
     # Add in CAGs for the singletons
     for gene_name in list(singletons):
