@@ -322,6 +322,7 @@ def find_flat_clusters(
         dm = dm_from_ann(df)
         
     # Now compute the flat clusters
+    start_time = time.time()
     flat_clusters = fcluster(
         linkage(
             dm,
@@ -331,6 +332,9 @@ def find_flat_clusters(
         max_dist, 
         criterion="distance"
     )
+    logging.info("Found flat clusters: {:,} seconds elapsed".format(
+        round(time.time() - start_time, 2)
+    ))
 
     return flat_clusters
 
@@ -390,6 +394,7 @@ def dm_from_ann(df, max_iter=99, threads=1):
     ))
 
     # Make the empty list
+    start_time = time.time()
     n = df.shape[0]
     dm = np.ndarray(condensed_ix(n, n - 1, n))
 
@@ -440,6 +445,10 @@ def dm_from_ann(df, max_iter=99, threads=1):
     if any(np.isnan(dm)):
         logging.info("Filling in {:,} missing values with 1".format(np.sum(np.isnan(dm))))
         dm = dm.fillna(1)
+    
+    logging.info("Constructed a condensed distance matrix: {:,} seconds elapsed".format(
+        round(time.time() - start_time, 2)
+    ))
 
     return dm
 
