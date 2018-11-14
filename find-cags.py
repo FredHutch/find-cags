@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 
-import os
-import io
-import sys
-import uuid
-import copy
-import time
-import gzip
-import json
-import boto3
-import shutil
-import nmslib
-import logging
 import argparse
-import traceback
-import numpy as np
-import pandas as pd
-from scipy.stats import gmean
+import boto3
+import copy
+from fastcluster import linkage
+import gzip
+import io
+import json
+import logging
+from math import ceil
 from multiprocessing import Pool
-from scipy.spatial.distance import pdist, squareform
-from scipy.cluster.hierarchy import linkage, fcluster
+import nmslib
+import numpy as np
+import os
+import pandas as pd
+from scipy.cluster.hierarchy import fcluster
+from scipy.spatial.distance import pdist
+from scipy.stats import gmean
+import shutil
+import sys
+import time
+import traceback
+import uuid
 
 
 def exit_and_clean_up(temp_folder):
@@ -227,20 +229,23 @@ def return_results(df, summary_df, cags, log_fp, output_prefix, output_folder, t
             shutil.copy(fp, output_folder)
 
 
-def make_nmslib_index(df):
+def make_nmslib_index(df, verbose=True):
     """Make the HNSW index"""
-    logging.info("Making the HNSW index")
+    if verbose:
+        logging.info("Making the HNSW index")
     index = nmslib.init(method='hnsw', space='cosinesimil')
 
-    logging.info("Adding {:,} genes to the nmslib index".format(df.shape[0]))
+    if verbose:
+        logging.info("Adding {:,} genes to the nmslib index".format(df.shape[0]))
     index.addDataPointBatch(df.values)
-    logging.info("Making the index")
+    if verbose:
+        logging.info("Making the index")
     index.createIndex({'post': 2, "M": 200}, print_progress=False)
 
     return index
 
 
-def get_gene_neighborhood(input_data):
+def get_gene_neighborhood(central_gene, nearest_neighbors, genes_remaining):
     """
     Return the gene neighborhood for a particular gene.
     
@@ -250,8 +255,6 @@ def get_gene_neighborhood(input_data):
 
     Return the second order neighbors of the central gene (as a set).
     """
-
-    central_gene, nearest_neighbors, genes_remaining = input_data
 
     if central_gene not in nearest_neighbors:
         return set()
@@ -275,15 +278,14 @@ def complete_linkage_clustering(input_data):
     if df.shape[0] == 1:
         return set(df.index.values)
 
-    # Compute the linkage (this will also calculate the pairwise distances)
-    l = linkage(
-        df,
-        method=linkage_type,
-        metric=distance_metric,
-    )
     # Get the flat clusters
-    flat_clusters = fcluster(l, max_dist, criterion="distance")
-
+    flat_clusters = find_flat_clusters(
+        df,
+        max_dist,
+        distance_metric=distance_metric,
+        linkage_type=linkage_type
+    )
+    
     # Reformat the clusters as a list of lists
     clusters = [
         [] for ix in range(flat_clusters.max() + 1)
@@ -297,6 +299,122 @@ def complete_linkage_clustering(input_data):
 
     # Return the largest cluster (or the one that is tied for the largest)
     return set(clusters[0])
+
+
+def find_flat_clusters(
+    df, 
+    max_dist,
+    linkage_type="average",
+    distance_metric="cosine",
+    exhaustive_max_dim=10000,
+    threads=1
+):
+    """Find the set of flat clusters for a given set of observations."""
+
+    # If the number of entries is small, compute the whole distance matrix
+    if df.shape[0] <= exhaustive_max_dim:
+        dm = pdist(df.values, metric=distance_metric)
+        
+    else:
+        # In this case, compute the linkage using a distance matrix computed via ANN
+
+        # Distance metric must be "cosine"
+        assert distance_metric == "cosine", "ANN can only compute cosine at the moment"
+
+        dm = dm_from_ann(df, threads=threads)
+        
+    # Now compute the flat clusters
+    start_time = time.time()
+    flat_clusters = fcluster(
+        linkage(
+            dm,
+            method=linkage_type,
+            metric="precomputed",
+        ), 
+        max_dist, 
+        criterion="distance"
+    )
+    logging.info("Found flat clusters: {:,} seconds elapsed".format(
+        round(time.time() - start_time, 2)
+    ))
+
+    return flat_clusters
+
+
+def dm_from_ann(df, max_iter=99, threads=1):
+    """Compute a condensed distance matrix using ANN."""
+
+    logging.info("Making a distance matrix for {:,} genes via ANN".format(
+        df.shape[0]
+    ))
+
+    start_time = time.time()
+    index = make_nmslib_index(df, verbose=False)
+    ann_distances = index.knnQueryBatch(
+        df.values,
+        k=df.shape[0] - 1,
+        num_threads=threads
+    )
+    logging.info("Computed all ANN distances: {:,} seconds elapsed".format(
+        round(time.time() - start_time, 2)
+    ))
+
+    # Make the empty DM
+    start_time = time.time()
+    n = df.shape[0]
+    dm = np.ndarray((n, n))
+
+    for ix1, gene_neighbors in enumerate(ann_distances):
+        for ix2, d in zip(gene_neighbors[0], gene_neighbors[1]):
+            if ix1 != ix2:
+                dm[ix1, ix2] = d
+                dm[ix2, ix1] = d
+
+    # Iteratively fill in missing values
+    n_missing_values = np.sum(np.isnan(dm)) + 1
+
+    for n in range(max_iter):
+        # Stop when all missing values have been filled in, or progress stops
+        if np.sum(np.isnan(dm)) == 0 or n_missing_values == np.sum(np.isnan(dm)):
+            break
+
+        logging.info("Iteration {:,} -- Number of missing values: {:,}".format(
+            n, np.sum(np.isnan(dm))
+        ))
+
+        # Iterate over the rows
+        for ix1 in range(n):
+
+            # Iterate over the columns
+            for ix2 in range(n):
+
+                # Only consider the bottom left triangle
+                if ix1 >= ix2:
+                    continue
+
+                # Check to see if the cell is null
+                if np.isnan(dm[ix1, ix2]):
+
+                    # Try to impute the missing value (conservatively)
+                    imputed_value = np.min(dm[ix1, :] + dm[ix2, :])
+
+                    # Check to see if imputation is possible
+                    if pd.isnull(imputed_value) is False:
+
+                        # Fill in the imputed value
+                        dm[ix1, ix2] = imputed_value
+
+        # Reset the counter on the number of missing values
+        n_missing_values = np.sum(np.isnan(dm))
+
+    # Format a condensed matrix
+    dm = np.concatenate([dm[ix, (ix+1):] for ix in range(dm.shape[0] - 1)])
+
+    logging.info("Constructed a condensed distance matrix: {:,} seconds elapsed".format(
+        round(time.time() - start_time, 2)
+    ))
+
+    return dm
 
 
 def make_cags_with_ann(
@@ -324,12 +442,20 @@ def make_cags_with_ann(
     # Format the nearest neighbors as a dict of sets
     nearest_neighbors = {}
 
-    # Iterate over every gene
-    for gene_ix, gene_neighbors in enumerate(index.knnQueryBatch(
+    # Calculate distances with ANN
+    start_time = time.time()
+    ann_distances = index.knnQueryBatch(
         df.values,
         k=starting_n_neighbors,
         num_threads=threads
-    )):
+    )
+    logging.info("Calculated ANN distances: {:,} seconds".format(
+        round(time.time() - start_time, 2))
+    )
+
+    # Iterate over every gene
+    start_time = time.time()
+    for gene_ix, gene_neighbors in enumerate(ann_distances):
         gene_name = df.index.values[gene_ix]
         nn = set([
             df.index.values[neighbor_ix]
@@ -344,8 +470,10 @@ def make_cags_with_ann(
             genes_remaining.add(gene_name)
         else:
             singletons.add(gene_name)
+    logging.info("Added nearest neighbors: {:,} seconds".format(
+        round(time.time() - start_time, 2))
+    )
 
-    logging.info("Formatted nearest neighbors for every input gene")
     logging.info("Genes with neighbors: {:,} -- Singletons: {:,}".format(
         len(nearest_neighbors), len(singletons)
     ))
@@ -363,18 +491,16 @@ def make_cags_with_ann(
     # Keep clustering until everything is gone
     while len(genes_remaining) > 0:
 
-        # Get some of the advantages of parallel processing
-
         # Find the linkage clusters in parallel
         for linkage_cluster in pool.imap_unordered(
             complete_linkage_clustering,
             [
                 (
-                    df.reindex(index=list(get_gene_neighborhood((
+                    df.reindex(index=list(get_gene_neighborhood(
                         central_gene,
                         nearest_neighbors,
                         genes_remaining
-                    )))),
+                    ))),
                     max_dist, 
                     distance_metric, 
                     linkage_type
@@ -382,6 +508,7 @@ def make_cags_with_ann(
                 for central_gene in np.random.choice(list(genes_remaining), threads * 4)
             ]
         ):
+
             # Make sure that every member of this cluster still needs to be clustered
             if len(linkage_cluster) > 0 and linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
 
@@ -395,14 +522,16 @@ def make_cags_with_ann(
 
                 # Remove these genes from further consideration
                 genes_remaining = genes_remaining - linkage_cluster
+
                 df.drop(index=list(linkage_cluster), inplace=True)
+                
                 for gene_name in list(linkage_cluster):
                     if gene_name in nearest_neighbors:
                         del nearest_neighbors[gene_name]
-                
+
     # Add in CAGs for the singletons
     for gene_name in list(singletons):
-        cags[cag_ix] = list(gene_name)
+        cags[cag_ix] = [gene_name]
         cag_ix += 1
 
     # Basic sanity checks
@@ -413,7 +542,7 @@ def make_cags_with_ann(
     return cags
 
 
-def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
+def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
     """Check to see if any CAGs are overlapping. If so, join them and combine the result."""
 
     # Make a dict linking each gene to its CAG - omitting singletons
@@ -423,6 +552,10 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
         for gene_id in gene_id_list
         if len(gene_id_list) > 1
     }
+
+    if len(cag_dict) == 1:
+        logging.info("There is only 1 non-singleton CAG -- no need to cluster again")
+        return
 
     # Make a DF with the mean abundance of each CAG
     logging.info("Computing mean abundances for {:,} CAGs and {:,} genes (omitting singletons)".format(
@@ -435,14 +568,12 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
 
     # Find the flat linkage clusters of the CAGs
     logging.info("Finding groups of CAGs")
-    cag_clusters = fcluster(
-        linkage(
-            cag_df,
-            method=linkage_type,
-            metric=distance_metric,
-        ), 
-        max_dist, 
-        criterion="distance"
+    cag_clusters = find_flat_clusters(
+        cag_df,
+        max_dist,
+        linkage_type=linkage_type,
+        distance_metric=distance_metric,
+        threads=threads
     )
 
     # Iterate over the groups of CAGs
@@ -473,14 +604,11 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
             ))
 
             # Make new groups
-            new_cags = fcluster(
-                linkage(
-                    df.reindex(index=genes_to_regroup),
-                    method=linkage_type,
-                    metric=distance_metric,
-                ),
+            new_cags = find_flat_clusters(
+                df.reindex(index=genes_to_regroup),
                 max_dist,
-                criterion="distance"
+                linkage_type=linkage_type,
+                distance_metric=distance_metric,
             )
 
             logging.info("Made a new set of {:,} CAGs".format(
@@ -503,20 +631,19 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
 def genes_are_overlapping(df1, df2, max_dist, distance_metric="cosine", linkage_type="average"):
     """Check to see if the two sets of genes are completely overlapping."""
     
-    # Compute the linkage (this will also calculate the pairwise distances)
-    l = linkage(
-        pd.concat([df1, df2]),
-        method=linkage_type,
-        metric=distance_metric,
-    )
     # Get the flat clusters
-    flat_clusters = fcluster(l, max_dist, criterion="distance")
+    flat_clusters = find_flat_clusters(
+        pd.concat([df1, df2]),
+        max_dist,
+        distance_metric=distance_metric,
+        linkage_type=linkage_type
+    )
 
     # Return True if there is only a single cluster at this threshold
     return len(set(flat_clusters)) == 1
 
 
-def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average"):
+def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
     """Refine the CAGs by merging all groups that are overlapping."""
 
     # Repeat until all overlapping CAGs are merged, maxing out after a few iterations
@@ -532,7 +659,8 @@ def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkag
             df,
             max_dist,
             distance_metric=distance_metric,
-            linkage_type=linkage_type
+            linkage_type=linkage_type,
+            threads=threads
         )
 
         logging.info("Merging together {:,} CAGs yielded {:,} CAGs".format(
@@ -697,10 +825,17 @@ def find_cags(
             df.copy(),
             max_dist,
             distance_metric=distance_metric,
-            linkage_type=linkage_type
+            linkage_type=linkage_type,
+            threads=threads
         )
     except:
         exit_and_clean_up(temp_folder)
+    
+    # Rename the CAGs
+    cags = {
+        ix: list_of_genes
+        for ix, list_of_genes in enumerate(sorted(list(cags.values()), key=len, reverse=True))
+    }
 
     # Print the number of total CAGs, number of singletons, etc.
     logging.info("Number of CAGs = {:,}".format(
