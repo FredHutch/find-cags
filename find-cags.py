@@ -21,7 +21,7 @@ from scipy.stats import gmean
 from multiprocessing import Pool
 from scipy.spatial.distance import pdist
 from scipy.cluster.hierarchy import linkage, fcluster
-from functools import lrucache
+from functools import lru_cache
 
 
 def exit_and_clean_up(temp_folder):
