@@ -496,11 +496,11 @@ def make_cags_with_ann(
             complete_linkage_clustering,
             [
                 (
-                    df.reindex(index=list(get_gene_neighborhood((
+                    df.reindex(index=list(get_gene_neighborhood(
                         central_gene,
                         nearest_neighbors,
                         genes_remaining
-                    )))),
+                    ))),
                     max_dist, 
                     distance_metric, 
                     linkage_type
