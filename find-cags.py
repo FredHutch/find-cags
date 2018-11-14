@@ -396,15 +396,16 @@ def dm_from_ann(df, max_iter=99, threads=1):
         round(time.time() - start_time, 2)
     ))
 
-    # Make the empty list
+    # Make the empty DM
     start_time = time.time()
     n = df.shape[0]
-    dm = np.ndarray(condensed_ix(n, n - 1, n))
+    dm = np.ndarray((n, n))
 
     for ix1, gene_neighbors in enumerate(ann_distances):
         for ix2, d in zip(gene_neighbors[0], gene_neighbors[1]):
             if ix1 != ix2:
-                dm[condensed_ix(ix1, ix2, n)] = d
+                dm[ix1, ix2] = d
+                dm[ix2, ix1] = d
 
     # Iteratively fill in missing values
     n_missing_values = np.sum(np.isnan(dm)) + 1
@@ -429,26 +430,23 @@ def dm_from_ann(df, max_iter=99, threads=1):
                     continue
 
                 # Check to see if the cell is null
-                ix = condensed_ix(ix1, ix2, n)
-                if dm[ix].isnan():
+                if np.isnan(dm[ix1, ix2]):
 
                     # Try to impute the missing value (conservatively)
-                    imputed_value = (dm[condensed_row(ix1, n)] + dm[condensed_row(ix2, n)]).min()
+                    imputed_value = np.min(dm[ix1, :] + dm[ix2, :])
 
                     # Check to see if imputation is possible
                     if pd.isnull(imputed_value) is False:
 
                         # Fill in the imputed value
-                        dm[ix] = imputed_value
+                        dm[ix1, ix2] = imputed_value
 
         # Reset the counter on the number of missing values
         n_missing_values = np.sum(np.isnan(dm))
 
-    # Fill in the remaining missing values
-    if any(np.isnan(dm)):
-        logging.info("Filling in {:,} missing values with 1".format(np.sum(np.isnan(dm))))
-        dm = dm.fillna(1)
-    
+    # Format a condensed matrix
+    dm = np.concatenate([dm[ix, (ix+1):] for ix in range(dm.shape[0] - 1)])
+
     logging.info("Constructed a condensed distance matrix: {:,} seconds elapsed".format(
         round(time.time() - start_time, 2)
     ))
