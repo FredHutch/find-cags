@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 
-import os
-import io
-import sys
-import uuid
-import copy
-import time
-from math import ceil
-import gzip
-import json
-import boto3
-import shutil
-import nmslib
-import logging
 import argparse
-import traceback
-import numpy as np
-import pandas as pd
-from scipy.stats import gmean
-from multiprocessing import Pool
-from scipy.spatial.distance import pdist
-from scipy.cluster.hierarchy import fcluster
+import boto3
+import copy
 from fastcluster import linkage
+import gzip
+import io
+import json
+import logging
+from math import ceil
+from multiprocessing import Pool
+import nmslib
+import numpy as np
+import os
+import pandas as pd
+from scipy.cluster.hierarchy import fcluster
+from scipy.spatial.distance import pdist
+from scipy.stats import gmean
+import shutil
+import sys
+import time
+import traceback
+import uuid
 
 
 def exit_and_clean_up(temp_folder):
