@@ -354,7 +354,7 @@ def dm_from_ann(df, max_iter=99, threads=1):
     index = make_nmslib_index(df, verbose=False)
     ann_distances = index.knnQueryBatch(
         df.values,
-        k=np.min([1000, df.shape[0] - 1]),
+        k=df.shape[0] - 1,
         num_threads=threads
     )
     logging.info("Computed all ANN distances: {:,} seconds elapsed".format(
