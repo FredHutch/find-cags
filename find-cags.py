@@ -376,13 +376,13 @@ def dm_from_ann(df, max_iter=99, threads=1):
     # Iteratively fill in missing values
     n_missing_values = np.sum(np.isnan(dm)) + 1
 
-    for n in range(max_iter):
+    for ix in range(max_iter):
         # Stop when all missing values have been filled in, or progress stops
         if np.sum(np.isnan(dm)) == 0 or n_missing_values == np.sum(np.isnan(dm)):
             break
 
         logging.info("Iteration {:,} -- Number of missing values: {:,}".format(
-            n, np.sum(np.isnan(dm))
+            ix, np.sum(np.isnan(dm))
         ))
 
         # Iterate over the rows
