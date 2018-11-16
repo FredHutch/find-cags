@@ -16,9 +16,9 @@ import numpy as np
 import os
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster
-from scipy.spatial.distance import pdist
 from scipy.stats import gmean
 import shutil
+from sklearn.metrics import pairwise_distances
 import sys
 import time
 import traceback
@@ -317,7 +317,7 @@ def find_flat_clusters(
 ):
     """Find the set of flat clusters for a given set of observations."""
 
-    dm = pdist(df.values, metric=distance_metric)
+    dm = pairwise_distances(df.values, metric=distance_metric, n_jobs=threads)
 
     # Now compute the flat clusters
     flat_clusters = fcluster(
