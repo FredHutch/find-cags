@@ -433,6 +433,9 @@ class TrackTrailing():
     def average(self):
         return np.mean(self.cache)
 
+    def max(self):
+        return np.max(self.cache)
+
 
 def make_cags_with_ann(
     index,
@@ -503,7 +506,7 @@ def make_cags_with_ann(
     trailing = TrackTrailing(n=100)
 
     # Keep clustering until everything is gone
-    while len(genes_remaining) > 0 and trailing.average() > 10:
+    while len(genes_remaining) > 0 and trailing.max() > 10:
 
         # Get a list of neighborhoods to test
         list_of_neighborhoods = [
