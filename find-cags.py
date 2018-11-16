@@ -454,7 +454,6 @@ def make_cags_with_ann(
                 for neighborhood in list_of_neighborhoods
             ]
         ):
-            logging.info("Returned a list of {:,} cluster(s)".format(len(list_of_clusters)))
             for linkage_cluster in list_of_clusters:
 
                 # Make a set for comparisons
