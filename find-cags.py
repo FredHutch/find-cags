@@ -3,6 +3,7 @@
 import argparse
 import boto3
 import copy
+from collections import defaultdict
 from fastcluster import linkage
 import gzip
 import io
@@ -257,7 +258,7 @@ def get_gene_neighborhood(central_gene, nearest_neighbors, genes_remaining):
     """
 
     if central_gene not in nearest_neighbors:
-        return set()
+        return []
 
     # Get the first and second order connections
     neighborhood = set([central_gene])
@@ -267,7 +268,7 @@ def get_gene_neighborhood(central_gene, nearest_neighbors, genes_remaining):
             neighborhood |= nearest_neighbors[first_order_connection]
     neighborhood = neighborhood & genes_remaining
 
-    return neighborhood
+    return list(neighborhood)
 
 
 def complete_linkage_clustering(input_data):
@@ -276,7 +277,7 @@ def complete_linkage_clustering(input_data):
     df, max_dist, distance_metric, linkage_type = input_data
 
     if df.shape[0] == 1:
-        return set(df.index.values)
+        return [set(df.index.values)]
 
     # Get the flat clusters
     flat_clusters = find_flat_clusters(
@@ -297,8 +298,13 @@ def complete_linkage_clustering(input_data):
     # Sort by size
     clusters = sorted(clusters, key=len, reverse=True)
 
-    # Return the largest cluster (or the one that is tied for the largest)
-    return set(clusters[0])
+    # Return the clusters that are at least 50% the size of the largest one
+    largest_cluster = len(clusters[0])
+    return [
+        clusters[ix]
+        for ix in range(len(clusters))
+        if ix == 0 or len(clusters[ix]) > (largest_cluster / 2)
+    ]
 
 
 def find_flat_clusters(
@@ -413,6 +419,20 @@ def dm_from_ann(df, max_iter=99, threads=1):
     return dm
 
 
+class TrackTrailing():
+
+    def __init__(self, n=100, start=1000):
+        self.cache = np.array([start for ix in range(n)])
+        self.counter = 0
+        self.n = n
+
+    def add(self, new_size):
+        self.cache[self.counter % self.n] = new_size
+
+    def average(self):
+        return np.mean(self.cache)
+
+
 def make_cags_with_ann(
     index,
     max_dist,
@@ -429,14 +449,8 @@ def make_cags_with_ann(
     logging.info("Starting with the closest {:,} neighbors for all genes".format(
         starting_n_neighbors))
 
-    # Keep track of the genes that are singletons at this early stage
-    singletons = set()
-
-    # Keep track of which genes remain to be clustered
-    genes_remaining = set()
-
     # Format the nearest neighbors as a dict of sets
-    nearest_neighbors = {}
+    nearest_neighbors = defaultdict(set)
 
     # Calculate distances with ANN
     start_time = time.time()
@@ -449,84 +463,124 @@ def make_cags_with_ann(
         round(time.time() - start_time, 2))
     )
 
-    # Iterate over every gene
+    # Iterate over every gene and its neighbors
     start_time = time.time()
-    for gene_ix, gene_neighbors in enumerate(ann_distances):
-        gene_name = df.index.values[gene_ix]
-        nn = set([
-            df.index.values[neighbor_ix]
-            for neighbor_ix, neighbor_distance in zip(
-                gene_neighbors[0],
-                gene_neighbors[1]
-            )
-            if neighbor_distance <= max_dist
-        ])
-        if len(nn) > 1:
-            nearest_neighbors[gene_name] = nn
-            genes_remaining.add(gene_name)
-        else:
-            singletons.add(gene_name)
+    for gene_ix, neighbors in enumerate(ann_distances):
+        # Iterate over the neighbors of that gene
+        n_neighbors = 0
+
+        for neighbor_ix, neighbor_distance in zip(neighbors[0], neighbors[1]):
+
+            # Add at least 10 connections, and everything under the threshold
+            if n_neighbors < 10 or neighbor_distance <= max_dist:
+
+                # Add both sides of the connection
+                nearest_neighbors[
+                    df.index.values[gene_ix]
+                ].add(
+                    df.index.values[neighbor_ix]
+                )
+
+                # Increment the number of neighbors added for this gene
+                n_neighbors += 1
+
     logging.info("Added nearest neighbors: {:,} seconds".format(
         round(time.time() - start_time, 2))
     )
 
-    logging.info("Genes with neighbors: {:,} -- Singletons: {:,}".format(
-        len(nearest_neighbors), len(singletons)
-    ))
-
     # Keep track of the number of genes that were input
     n_genes_input = df.shape[0]
 
-    # Make sure that the number of genes adds up
-    assert n_genes_input == len(genes_remaining) + len(singletons)
+    # Keep track of which genes remain to be clustered
+    genes_remaining = set(df.index.values)
 
     # Find CAGs greedily, taking the complete linkage group for each gene in random order
     cags = {}
     cag_ix = 0
 
+    # Keep track of the last 100 CAGs that were added
+    trailing = TrackTrailing(n=100)
+
     # Keep clustering until everything is gone
-    while len(genes_remaining) > 0:
+    while len(genes_remaining) > 0 and trailing.average() > 10:
+
+        # Get a list of neighborhoods to test
+        list_of_neighborhoods = [
+            get_gene_neighborhood(
+                central_gene,
+                nearest_neighbors,
+                genes_remaining
+            )
+            for central_gene in np.random.choice(list(genes_remaining), threads * 4)
+        ]
+
+        list_of_neighborhoods = [n for n in list_of_neighborhoods if len(n) > 1]
+
+        if len(list_of_neighborhoods) == 0:
+            logging.info("Batch does not contain any non-zero clusters, breaking")
+            break
 
         # Find the linkage clusters in parallel
-        for linkage_cluster in pool.imap_unordered(
+        for list_of_clusters in pool.imap_unordered(
             complete_linkage_clustering,
             [
                 (
-                    df.reindex(index=list(get_gene_neighborhood(
-                        central_gene,
-                        nearest_neighbors,
-                        genes_remaining
-                    ))),
+                    df.reindex(index=neighborhood),
                     max_dist, 
                     distance_metric, 
                     linkage_type
                 )
-                for central_gene in np.random.choice(list(genes_remaining), threads * 4)
+                for neighborhood in list_of_neighborhoods
             ]
         ):
+            logging.info("Returned a list of {:,} cluster(s)".format(len(list_of_clusters)))
+            for linkage_cluster in list_of_clusters:
 
-            # Make sure that every member of this cluster still needs to be clustered
-            if len(linkage_cluster) > 0 and linkage_cluster <= genes_remaining and len(genes_remaining) > 0:
+                # Make a set for comparisons
+                linkage_cluster_set = set(linkage_cluster)
 
-                logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
-                    len(linkage_cluster),
-                    len(genes_remaining) - len(linkage_cluster)
-                ))
+                # Make sure that every member of this cluster still needs to be clustered
+                if len(linkage_cluster) > 0 and linkage_cluster_set <= genes_remaining:
 
-                cags[cag_ix] = list(linkage_cluster)
-                cag_ix += 1
+                    logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
+                        len(linkage_cluster),
+                        len(genes_remaining) - len(linkage_cluster)
+                    ))
 
-                # Remove these genes from further consideration
-                genes_remaining = genes_remaining - linkage_cluster
+                    # Add this CAG size to the trailing average
+                    trailing.add(len(linkage_cluster))
 
-                df.drop(index=list(linkage_cluster), inplace=True)
-                
-                for gene_name in list(linkage_cluster):
-                    if gene_name in nearest_neighbors:
-                        del nearest_neighbors[gene_name]
+                    cags[cag_ix] = linkage_cluster
+                    cag_ix += 1
 
-    # Add in CAGs for the singletons
-    for gene_name in list(singletons):
+                    # Remove these genes from further consideration
+                    genes_remaining = genes_remaining - linkage_cluster_set
+
+                    df.drop(index=linkage_cluster, inplace=True)
+                    
+                    for gene_name in linkage_cluster:
+                        if gene_name in nearest_neighbors:
+                            del nearest_neighbors[gene_name]
+
+                            # Prune the set of nearest neighbors every once in a while
+                            if len(nearest_neighbors) in [1000, 10000, 100000, 200000, 1000000, 2000000, 10000000]:
+                                start_time = time.time()
+
+                                nearest_neighbors = {
+                                    k: v & genes_remaining
+                                    for k, v in nearest_neighbors.items()
+                                }
+
+                                logging.info("Pruned the set of {:,} nearest neighbors: {:,} seconds".format(
+                                    len(nearest_neighbors),
+                                    round(time.time() - start_time, 2)
+                                ))
+
+    # Add in all of the singletons
+    logging.info("Adding in {:,} singletons that weren't clustered".format(
+        len(genes_remaining)
+    ))
+    for gene_name in list(genes_remaining):
         cags[cag_ix] = [gene_name]
         cag_ix += 1
 
