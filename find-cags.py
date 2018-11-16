@@ -317,18 +317,8 @@ def find_flat_clusters(
 ):
     """Find the set of flat clusters for a given set of observations."""
 
-    # If the number of entries is small, compute the whole distance matrix
-    if df.shape[0] <= exhaustive_max_dim:
-        dm = pdist(df.values, metric=distance_metric)
-        
-    else:
-        # In this case, compute the linkage using a distance matrix computed via ANN
+    dm = pdist(df.values, metric=distance_metric)
 
-        # Distance metric must be "cosine"
-        assert distance_metric == "cosine", "ANN can only compute cosine at the moment"
-
-        dm = dm_from_ann(df, threads=threads)
-        
     # Now compute the flat clusters
     flat_clusters = fcluster(
         linkage(
@@ -341,83 +331,6 @@ def find_flat_clusters(
     )
 
     return flat_clusters
-
-
-def dm_from_ann(df, max_iter=99, threads=1):
-    """Compute a condensed distance matrix using ANN."""
-
-    logging.info("Making a distance matrix for {:,} genes via ANN".format(
-        df.shape[0]
-    ))
-
-    start_time = time.time()
-    index = make_nmslib_index(df, verbose=False)
-    ann_distances = index.knnQueryBatch(
-        df.values,
-        k=df.shape[0] - 1,
-        num_threads=threads
-    )
-    logging.info("Computed all ANN distances: {:,} seconds elapsed".format(
-        round(time.time() - start_time, 2)
-    ))
-
-    # Make the empty DM
-    start_time = time.time()
-    n = df.shape[0]
-
-    dm = np.empty((n, n))
-    dm[:] = np.nan
-
-    for ix1, gene_neighbors in enumerate(ann_distances):
-        for ix2, d in zip(gene_neighbors[0], gene_neighbors[1]):
-            dm[ix1, ix2] = d
-            dm[ix2, ix1] = d
-
-    # Iteratively fill in missing values
-    n_missing_values = np.sum(np.isnan(dm)) + 1
-
-    for ix in range(max_iter):
-        # Stop when all missing values have been filled in, or progress stops
-        if np.sum(np.isnan(dm)) == 0 or n_missing_values == np.sum(np.isnan(dm)):
-            break
-
-        logging.info("Iteration {:,} -- Number of missing values: {:,}".format(
-            ix, np.sum(np.isnan(dm))
-        ))
-
-        # Iterate over the rows
-        for ix1 in range(n):
-
-            # Iterate over the columns
-            for ix2 in range(n):
-
-                # Check to see if the cell is null
-                if np.isnan(dm[ix1, ix2]):
-
-                    # Try to impute the missing value (conservatively)
-                    imputed_value = np.min(dm[ix1, :] + dm[ix2, :])
-
-                    # Check to see if imputation is possible
-                    if np.isfinite(imputed_value):
-
-                        # Fill in the imputed value
-                        dm[ix1, ix2] = imputed_value
-                        dm[ix2, ix1] = imputed_value
-
-        # Reset the counter on the number of missing values
-        n_missing_values = np.sum(np.isnan(dm))
-
-    # Fill in any values that remain missing
-    dm[np.isnan(dm)] = 1
-
-    # Format a condensed matrix
-    dm = np.concatenate([dm[ix, (ix+1):] for ix in range(dm.shape[0] - 1)])
-
-    logging.info("Constructed a condensed distance matrix: {:,} seconds elapsed".format(
-        round(time.time() - start_time, 2)
-    ))
-
-    return dm
 
 
 class TrackTrailing():
@@ -515,7 +428,7 @@ def make_cags_with_ann(
                 nearest_neighbors,
                 genes_remaining
             )
-            for central_gene in np.random.choice(list(genes_remaining), threads * 4)
+            for central_gene in np.random.choice(list(genes_remaining), 100)
         ]
 
         list_of_neighborhoods = [n for n in list_of_neighborhoods if len(n) > 1]
