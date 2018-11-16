@@ -370,7 +370,6 @@ def dm_from_ann(df, max_iter=99, threads=1):
         for ix2, d in zip(gene_neighbors[0], gene_neighbors[1]):
             if ix1 != ix2:
                 dm[ix1, ix2] = d
-                dm[ix2, ix1] = d
 
     # Iteratively fill in missing values
     n_missing_values = np.sum(np.isnan(dm)) + 1
