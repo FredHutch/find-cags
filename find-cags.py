@@ -354,7 +354,7 @@ def dm_from_ann(df, max_iter=99, threads=1):
     index = make_nmslib_index(df, verbose=False)
     ann_distances = index.knnQueryBatch(
         df.values,
-        k=df.shape[0] - 1,
+        k=np.min([1000, df.shape[0] - 1]),
         num_threads=threads
     )
     logging.info("Computed all ANN distances: {:,} seconds elapsed".format(
@@ -364,12 +364,14 @@ def dm_from_ann(df, max_iter=99, threads=1):
     # Make the empty DM
     start_time = time.time()
     n = df.shape[0]
-    dm = np.ndarray((n, n))
+
+    dm = np.empty((n, n))
+    dm[:] = np.nan
 
     for ix1, gene_neighbors in enumerate(ann_distances):
         for ix2, d in zip(gene_neighbors[0], gene_neighbors[1]):
-            if ix1 != ix2:
-                dm[ix1, ix2] = d
+            dm[ix1, ix2] = d
+            dm[ix2, ix1] = d
 
     # Iteratively fill in missing values
     n_missing_values = np.sum(np.isnan(dm)) + 1
@@ -389,10 +391,6 @@ def dm_from_ann(df, max_iter=99, threads=1):
             # Iterate over the columns
             for ix2 in range(n):
 
-                # Only consider the bottom left triangle
-                if ix1 >= ix2:
-                    continue
-
                 # Check to see if the cell is null
                 if np.isnan(dm[ix1, ix2]):
 
@@ -400,13 +398,17 @@ def dm_from_ann(df, max_iter=99, threads=1):
                     imputed_value = np.min(dm[ix1, :] + dm[ix2, :])
 
                     # Check to see if imputation is possible
-                    if pd.isnull(imputed_value) is False:
+                    if np.isfinite(imputed_value):
 
                         # Fill in the imputed value
                         dm[ix1, ix2] = imputed_value
+                        dm[ix2, ix1] = imputed_value
 
         # Reset the counter on the number of missing values
         n_missing_values = np.sum(np.isnan(dm))
+
+    # Fill in any values that remain missing
+    dm[np.isnan(dm)] = 1
 
     # Format a condensed matrix
     dm = np.concatenate([dm[ix, (ix+1):] for ix in range(dm.shape[0] - 1)])
