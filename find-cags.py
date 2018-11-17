@@ -313,12 +313,11 @@ def find_flat_clusters(
     max_dist,
     linkage_type="average",
     distance_metric="cosine",
-    exhaustive_max_dim=10000,
     threads=1
 ):
     """Find the set of flat clusters for a given set of observations."""
 
-    if threads == 1:
+    if threads == 1 or df.shape[0] < 2000:
         dm = pdist(df.values, metric=distance_metric)
     else:
         dm = pairwise_distances(df.values, metric=distance_metric, n_jobs=threads)
