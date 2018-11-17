@@ -323,6 +323,12 @@ def find_flat_clusters(
     else:
         dm = pairwise_distances(df.values, metric=distance_metric, n_jobs=threads)
 
+        # Transform into a condensed distance matrix
+        dm = np.concatenate([
+            dm[ix, (ix+1):]
+            for ix in range(df.shape[0] - 1)
+        ])
+
     # Now compute the flat clusters
     flat_clusters = fcluster(
         linkage(
@@ -333,6 +339,8 @@ def find_flat_clusters(
         max_dist, 
         criterion="distance"
     )
+
+    assert len(flat_clusters) == df.shape[0]
 
     return flat_clusters
 
