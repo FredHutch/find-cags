@@ -587,6 +587,7 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
                 max_dist,
                 linkage_type=linkage_type,
                 distance_metric=distance_metric,
+                threads=threads
             )
 
             logging.info("Made a new set of {:,} CAGs".format(
@@ -604,21 +605,6 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
                     new_cag_ix += 1
                 cags[new_cag_ix] = genes_in_cag.values.tolist()
                 new_cag_ix += 1
-
-
-def genes_are_overlapping(df1, df2, max_dist, distance_metric="cosine", linkage_type="average"):
-    """Check to see if the two sets of genes are completely overlapping."""
-    
-    # Get the flat clusters
-    flat_clusters = find_flat_clusters(
-        pd.concat([df1, df2]),
-        max_dist,
-        distance_metric=distance_metric,
-        linkage_type=linkage_type
-    )
-
-    # Return True if there is only a single cluster at this threshold
-    return len(set(flat_clusters)) == 1
 
 
 def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
