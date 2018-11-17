@@ -7,7 +7,7 @@ RUN apt update && \
     awscli libcurl4-openssl-dev libhdf5-dev python-tables hdf5-tools
 
 RUN pip3 install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 feather-format \
-                 nmslib tables fastcluster
+                 nmslib tables fastcluster scikit-learn
 
 # Add the script to the PATH
 ADD ./find-cags.py /usr/local/bin/
