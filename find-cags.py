@@ -259,7 +259,7 @@ def get_gene_neighborhood(central_gene, nearest_neighbors, genes_remaining):
     """
 
     if central_gene not in nearest_neighbors:
-        return []
+        return [central_gene]
 
     # Get the first and second order connections
     neighborhood = set([central_gene])
@@ -391,36 +391,49 @@ def make_cags_with_ann(
         round(time.time() - start_time, 2))
     )
 
+    # Keep track of the list of singletons
+    singletons = set([])
+
     # Iterate over every gene and its neighbors
     start_time = time.time()
     for gene_ix, neighbors in enumerate(ann_distances):
-        # Iterate over the neighbors of that gene
-        n_neighbors = 0
 
-        for neighbor_ix, neighbor_distance in zip(neighbors[0], neighbors[1]):
+        gene_name = df.index.values[gene_ix]
 
-            # Add at least 10 connections, and everything under the threshold
-            if n_neighbors < 10 or neighbor_distance <= max_dist:
+        neighbor_list = [
+            df.index.values[neighbor_ix]
+            for neighbor_ix, neighbor_distance in zip(neighbors[0], neighbors[1])
+            if neighbor_distance <= max_dist
+        ]
+
+        if len(neighbor_list) > 1:
+            for neighbor_name in neighbor_list:
 
                 # Add both sides of the connection
-                nearest_neighbors[
-                    df.index.values[gene_ix]
-                ].add(
-                    df.index.values[neighbor_ix]
-                )
+                nearest_neighbors[gene_name].add(neighbor_name)
+                nearest_neighbors[neighbor_name].add(gene_name)
 
-                # Increment the number of neighbors added for this gene
-                n_neighbors += 1
+        else:
+            singletons.add(gene_name)
+
+    # Keep track of which genes remain to be clustered
+    genes_remaining = set(nearest_neighbors.keys())
+
+    # Make sure that there are no genes marked "singleton" in appropriately
+    singletons = singletons - genes_remaining
 
     logging.info("Added nearest neighbors: {:,} seconds".format(
         round(time.time() - start_time, 2))
     )
 
+    logging.info("Genes with neighbors: {:,} -- singletons: {:,}".format(
+        len(nearest_neighbors),
+        len(singletons)
+    ))
+
     # Keep track of the number of genes that were input
     n_genes_input = df.shape[0]
-
-    # Keep track of which genes remain to be clustered
-    genes_remaining = set(df.index.values)
+    assert n_genes_input == len(nearest_neighbors) + len(singletons)
 
     # Find CAGs greedily, taking the complete linkage group for each gene in random order
     cags = {}
@@ -442,11 +455,17 @@ def make_cags_with_ann(
             for central_gene in np.random.choice(list(genes_remaining), 50)
         ]
 
+        # Add the singletons
+        for n in list_of_neighborhoods:
+            if len(n) == 1:
+                singletons.add(n[0])
+                if n[0] in genes_remaining:
+                    genes_remaining.remove(n[0])
+
         list_of_neighborhoods = [n for n in list_of_neighborhoods if len(n) > 1]
 
         if len(list_of_neighborhoods) == 0:
-            logging.info("Batch does not contain any non-zero clusters, breaking")
-            break
+            continue
 
         # Find the linkage clusters in parallel
         for list_of_clusters in pool.imap_unordered(
@@ -468,6 +487,11 @@ def make_cags_with_ann(
 
                 # Make sure that every member of this cluster still needs to be clustered
                 if len(linkage_cluster) > 0 and linkage_cluster_set <= genes_remaining:
+
+                    if len(linkage_cluster) == 1:
+                        singletons.add(linkage_cluster[0])
+                        genes_remaining.remove(linkage_cluster[0])
+                        continue
 
                     logging.info("Adding a CAG with {:,} members, {:,} genes unclustered".format(
                         len(linkage_cluster),
@@ -502,9 +526,9 @@ def make_cags_with_ann(
 
     # Add in all of the singletons
     logging.info("Adding in {:,} singletons that weren't clustered".format(
-        len(genes_remaining)
+        len(genes_remaining) + len(singletons)
     ))
-    for gene_name in list(genes_remaining):
+    for gene_name in list(genes_remaining) + list(singletons):
         cags[cag_ix] = [gene_name]
         cag_ix += 1
 
