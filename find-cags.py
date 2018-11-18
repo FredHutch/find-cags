@@ -439,7 +439,7 @@ def make_cags_with_ann(
                 nearest_neighbors,
                 genes_remaining
             )
-            for central_gene in np.random.choice(list(genes_remaining), 100)
+            for central_gene in np.random.choice(list(genes_remaining), 50)
         ]
 
         list_of_neighborhoods = [n for n in list_of_neighborhoods if len(n) > 1]
