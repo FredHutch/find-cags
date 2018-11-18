@@ -427,7 +427,7 @@ def make_cags_with_ann(
     cag_ix = 0
 
     # Keep track of the last 100 CAGs that were added
-    trailing = TrackTrailing(n=100)
+    trailing = TrackTrailing(n=500)
 
     # Keep clustering until everything is gone
     while len(genes_remaining) > 0 and trailing.max() > 10:
@@ -483,25 +483,22 @@ def make_cags_with_ann(
                     # Remove these genes from further consideration
                     genes_remaining = genes_remaining - linkage_cluster_set
 
-                    df.drop(index=linkage_cluster, inplace=True)
+                    if len(cags) % 1000 == 0:
+
+                        df = df.reindex(index=list(genes_remaining))
                     
-                    for gene_name in linkage_cluster:
-                        if gene_name in nearest_neighbors:
-                            del nearest_neighbors[gene_name]
+                        if len(cags) % 10000 == 0:
 
-                            # Prune the set of nearest neighbors every once in a while
-                            if len(nearest_neighbors) in [1000, 10000, 100000, 200000, 1000000, 2000000, 10000000]:
-                                start_time = time.time()
+                            start_time = time.time()
+                            nearest_neighbors = {
+                                k: nearest_neighbors[k] & genes_remaining
+                                for k in list(genes_remaining)
+                            }
 
-                                nearest_neighbors = {
-                                    k: v & genes_remaining
-                                    for k, v in nearest_neighbors.items()
-                                }
-
-                                logging.info("Pruned the set of {:,} nearest neighbors: {:,} seconds".format(
-                                    len(nearest_neighbors),
-                                    round(time.time() - start_time, 2)
-                                ))
+                            logging.info("Pruned the set of {:,} nearest neighbors: {:,} seconds".format(
+                                len(nearest_neighbors),
+                                round(time.time() - start_time, 2)
+                            ))
 
     # Add in all of the singletons
     logging.info("Adding in {:,} singletons that weren't clustered".format(
