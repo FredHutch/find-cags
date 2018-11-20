@@ -16,7 +16,7 @@ import numpy as np
 import os
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster
-from scipy.spatial.distance import pdist
+from scipy.spatial.distance import pdist, cdist
 from scipy.stats import gmean
 import shutil
 from sklearn.metrics import pairwise_distances
@@ -247,11 +247,11 @@ def make_nmslib_index(df, verbose=True):
     return index
 
 
-def get_gene_neighborhood(central_gene_ix, index, df, genes_remaining, starting_n_neighbors, max_dist, threads):
+def get_gene_neighborhood(central_gene_list, index, df, genes_remaining, starting_n_neighbors, max_dist, threads):
     """
     Return the gene neighborhood for a particular gene.
     
-    `central_gene_ix`: The primary gene to consider.
+    `central_gene_list`: The list of primary genes to consider.
     `index`: ANN index.
     `df`: Abundance DataFrame.
     `genes_remaining`: The set of genes that are remaining at this point of the analysis.
@@ -261,40 +261,46 @@ def get_gene_neighborhood(central_gene_ix, index, df, genes_remaining, starting_
     Return the second order neighbors of the central gene (as a set).
     """
 
-    neighborhood = set([central_gene_ix])
-
-    # Get the first order nearest neighbors
-    first_distances = index.knnQueryBatch(
-        df.reindex(index=[central_gene_ix]),
-        k=starting_n_neighbors,
-        num_threads=threads
-    )[0]
-
-    first_neighbors = [
-        ix
-        for ix, d in zip(first_distances[0], first_distances[1])
-        if d <= max_dist and ix in genes_remaining and ix != central_gene_ix
-    ]
-    
-    # Add the first neighbors to the neighborhood
-    neighborhood |= set(first_neighbors)
-
-    # Get the second order distances
-    second_distances = index.knnQueryBatch(
-        df.reindex(index=first_neighbors),
+    # Get the first order connections for this list of genes
+    first_distances_list = index.knnQueryBatch(
+        df.reindex(index=central_gene_list),
         k=starting_n_neighbors,
         num_threads=threads
     )
 
-    # Add the second order neighbors to the neighborhood
-    for l in second_distances:
-        neighborhood |= {
-            ix
-            for ix, d in zip(l[0], l[1])
-            if d <= max_dist and ix in genes_remaining
-        }
+    list_of_neighborhoods = []
 
-    return list(neighborhood)
+    for central_gene_ix, first_distances in zip(central_gene_list, first_distances_list):
+
+        neighborhood = set([central_gene_ix])
+
+        first_neighbors = [
+            ix
+            for ix, d in zip(first_distances[0], first_distances[1])
+            if d <= max_dist and ix in genes_remaining and ix != central_gene_ix
+        ]
+        
+        # Add the first neighbors to the neighborhood
+        neighborhood |= set(first_neighbors)
+
+        # Get the second order distances
+        second_distances = index.knnQueryBatch(
+            df.reindex(index=first_neighbors),
+            k=starting_n_neighbors,
+            num_threads=threads
+        )
+
+        # Add the second order neighbors to the neighborhood
+        for l in second_distances:
+            neighborhood |= {
+                ix
+                for ix, d in zip(l[0], l[1])
+                if d <= max_dist and ix in genes_remaining
+            }
+
+        list_of_neighborhoods.append(list(neighborhood))
+
+    return list_of_neighborhoods
 
 
 def complete_linkage_clustering(input_data):
@@ -425,18 +431,15 @@ def make_cags_with_ann(
 
         # Get a list of neighborhoods to test
         logging.info("Getting a list of gene neighborhoods")
-        list_of_neighborhoods = [
-            get_gene_neighborhood(
-                central_gene_ix,
-                index,
-                df,
-                genes_remaining,
-                starting_n_neighbors,
-                max_dist,
-                threads
-            )
-            for central_gene_ix in np.random.choice(list(genes_remaining), 50)
-        ]
+        list_of_neighborhoods = get_gene_neighborhood(
+            np.random.choice(list(genes_remaining), int(threads * 10)),
+            index,
+            df,
+            genes_remaining,
+            starting_n_neighbors,
+            max_dist,
+            threads
+        )
 
         # Add the singletons
         for n in list_of_neighborhoods:
@@ -533,6 +536,9 @@ def make_cags_with_ann(
 def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
     """Check to see if any CAGs are overlapping. If so, join them and combine the result."""
 
+    # Keep track of where it is safe to start adding new CAG IDs
+    new_cag_id = int(max(cags.keys()) + 1)
+
     # Make a dict linking each gene to its CAG - omitting singletons
     cag_dict = {
         gene_id: cag_id
@@ -556,69 +562,78 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
     cag_df = pd.concat([
         df,
         pd.DataFrame({"cag": pd.Series(cag_dict)})
-    ], axis=1, sort=True).groupby("cag").mean()
+    ], axis=1).groupby("cag").mean()
 
-    # Find the flat linkage clusters of the CAGs
-    logging.info("Finding groups of CAGs")
-    cag_clusters = find_flat_clusters(
-        cag_df,
-        max_dist,
-        linkage_type=linkage_type,
-        distance_metric=distance_metric,
-        threads=threads
-    )
+    # Make a list of lists of CAGs to regroup
+    list_of_cags_to_regroup = []
 
-    # Iterate over the groups of CAGs
-    for cag_cluster_ix in list(set(cag_clusters)):
-        # Check to see if multiple CAGs were grouped together
-        if (cag_clusters == cag_cluster_ix).sum() > 1:
+    # Iterate over every CAG
+    for cag_ix, cag_id in enumerate(cag_df.index.values[:-1]):
+        # Calculate the pairwise distance to all other CAGs
+        cag_dists = cdist(
+            cag_df.reindex(index=[cag_id]), 
+            cag_df.iloc[cag_ix+1:],
+            metric=distance_metric
+        )[0]
 
-            # Get the set of CAGs that will be regrouped
-            cags_to_regroup = [
-                cag_name
-                for cag_name, ix in zip(
-                    cag_df.index.values,
-                    cag_clusters
-                )
-                if ix == cag_cluster_ix
-            ]
+        # Get the set of CAGs that will be regrouped
+        cags_to_regroup = [
+            k
+            for k, v in zip(cag_df.index.values[cag_ix+1:], cag_dists)
+            if v <= max_dist
+        ] + [cag_id]
 
-            # Get the set of genes to regroup
-            genes_to_regroup = [
-                gene_name
-                for cag_name in cags_to_regroup
-                for gene_name in cags[cag_name]
-            ]
+        if len(cags_to_regroup) > 1:
+            list_of_cags_to_regroup.append(cags_to_regroup)
 
-            logging.info("Regrouping a set of {:,} CAGs and {:,} genes".format(
-                len(cags_to_regroup),
-                len(genes_to_regroup)
-            ))
+    # Now go through and regroup those CAGs
+    regrouped_cags = set()
 
-            # Make new groups
-            new_cags = find_flat_clusters(
-                df.reindex(index=genes_to_regroup),
-                max_dist,
-                linkage_type=linkage_type,
-                distance_metric=distance_metric,
-                threads=threads
-            )
+    for cags_to_regroup in list_of_cags_to_regroup:
 
-            logging.info("Made a new set of {:,} CAGs".format(
-                len(set(new_cags))
-            ))
+        # Don't regroup any CAGs that have already been regrouped
+        if any([
+            cag_id in regrouped_cags
+            for cag_id in cags_to_regroup
+        ]):
+            continue
 
-            # Remove the old CAGs
-            for cag_name in cags_to_regroup:
-                del cags[cag_name]
+        # Keep track of CAGs that have been regrouped
+        regrouped_cags |= set(cags_to_regroup)
 
-            # Add the new CAGs
-            new_cag_ix = 0
-            for cag_name, genes_in_cag in pd.Series(genes_to_regroup).groupby(new_cags):
-                while new_cag_ix in cags:
-                    new_cag_ix += 1
-                cags[new_cag_ix] = genes_in_cag.values.tolist()
-                new_cag_ix += 1
+        # Get the set of genes to regroup
+        genes_to_regroup = [
+            gene_name
+            for cag_name in cags_to_regroup
+            for gene_name in cags[cag_name]
+        ]
+
+        logging.info("Regrouping a set of {:,} CAGs and {:,} genes".format(
+            len(cags_to_regroup),
+            len(genes_to_regroup)
+        ))
+
+        # Make new groups
+        new_cags = find_flat_clusters(
+            df.reindex(index=genes_to_regroup),
+            max_dist,
+            linkage_type=linkage_type,
+            distance_metric=distance_metric,
+            threads=threads
+        )
+
+        logging.info("Made a new set of {:,} CAGs".format(
+            len(set(new_cags))
+        ))
+
+        # Remove the old CAGs
+        for cag_name in cags_to_regroup:
+            del cags[cag_name]
+
+        # Add the new CAGs
+        for cag_name, genes_in_cag in pd.Series(genes_to_regroup).groupby(new_cags):
+            cags[new_cag_id] = genes_in_cag.values.tolist()
+            new_cag_id += 1
 
 
 def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
@@ -627,7 +642,7 @@ def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkag
     # Repeat until all overlapping CAGs are merged, maxing out after a few iterations
     n_cags_previously = len(cags) + 1
     n_iters = 0
-    while n_cags_previously > len(cags):
+    while n_cags_previously != len(cags):
 
         n_cags_previously = len(cags)
 
