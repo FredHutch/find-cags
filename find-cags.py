@@ -552,7 +552,7 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
     cag_df = pd.concat([
         df,
         pd.DataFrame({"cag": pd.Series(cag_dict)})
-    ], axis=1).groupby("cag").mean()
+    ], axis=1, sort=True).groupby("cag").mean()
 
     # Find the flat linkage clusters of the CAGs
     logging.info("Finding groups of CAGs")
