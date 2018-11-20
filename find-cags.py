@@ -247,27 +247,52 @@ def make_nmslib_index(df, verbose=True):
     return index
 
 
-def get_gene_neighborhood(central_gene, nearest_neighbors, genes_remaining):
+def get_gene_neighborhood(central_gene_ix, index, df, genes_remaining, starting_n_neighbors, max_dist, threads):
     """
     Return the gene neighborhood for a particular gene.
     
-    `nearest_neighbors`: A dict with the set of nearest neighbors, keyed by gene.
-    `central_gene`: The primary gene to consider.
+    `central_gene_ix`: The primary gene to consider.
+    `index`: ANN index.
+    `df`: Abundance DataFrame.
     `genes_remaining`: The set of genes that are remaining at this point of the analysis.
+    `starting_n_neighbors`: Number of neighbors to find
+    `max_dist`: Maximum distance threshold
 
     Return the second order neighbors of the central gene (as a set).
     """
 
-    if central_gene not in nearest_neighbors:
-        return [central_gene]
+    neighborhood = set([central_gene_ix])
 
-    # Get the first and second order connections
-    neighborhood = set([central_gene])
-    for first_order_connection in nearest_neighbors[central_gene]:
-        if first_order_connection in nearest_neighbors:
-            neighborhood.add(first_order_connection)
-            neighborhood |= nearest_neighbors[first_order_connection]
-    neighborhood = neighborhood & genes_remaining
+    # Get the first order nearest neighbors
+    first_distances = index.knnQueryBatch(
+        df.reindex(index=[central_gene_ix]),
+        k=starting_n_neighbors,
+        num_threads=threads
+    )[0]
+
+    first_neighbors = [
+        ix
+        for ix, d in zip(first_distances[0], first_distances[1])
+        if d <= max_dist and ix in genes_remaining and ix != central_gene_ix
+    ]
+    
+    # Add the first neighbors to the neighborhood
+    neighborhood |= set(first_neighbors)
+
+    # Get the second order distances
+    second_distances = index.knnQueryBatch(
+        df.reindex(index=first_neighbors),
+        k=starting_n_neighbors,
+        num_threads=threads
+    )
+
+    # Add the second order neighbors to the neighborhood
+    for l in second_distances:
+        neighborhood |= {
+            ix
+            for ix, d in zip(l[0], l[1])
+            if d <= max_dist and ix in genes_remaining
+        }
 
     return list(neighborhood)
 
@@ -373,86 +398,44 @@ def make_cags_with_ann(
 ):
     """Make CAGs using the approximate nearest neighbor"""
 
-    # Get the nearest neighbors for every gene
-    logging.info("Starting with the closest {:,} neighbors for all genes".format(
-        starting_n_neighbors))
+    # Make a set of the genes remaining to be clustered
+    genes_remaining = set(range(df.shape[0]))
 
-    # Format the nearest neighbors as a dict of sets
-    nearest_neighbors = defaultdict(set)
+    # Keep track of the names of each gene
+    gene_names = list(df.index.values)
 
-    # Calculate distances with ANN
-    start_time = time.time()
-    ann_distances = index.knnQueryBatch(
-        df.values,
-        k=starting_n_neighbors,
-        num_threads=threads
-    )
-    logging.info("Calculated ANN distances: {:,} seconds".format(
-        round(time.time() - start_time, 2))
-    )
+    # Delete the names of the index
+    df = df.reset_index(drop=True)
 
-    # Keep track of the list of singletons
-    singletons = set([])
-
-    # Iterate over every gene and its neighbors
-    start_time = time.time()
-    for gene_ix, neighbors in enumerate(ann_distances):
-
-        gene_name = df.index.values[gene_ix]
-
-        neighbor_list = [
-            df.index.values[neighbor_ix]
-            for neighbor_ix, neighbor_distance in zip(neighbors[0], neighbors[1])
-            if neighbor_distance <= max_dist
-        ]
-
-        if len(neighbor_list) > 1:
-            for neighbor_name in neighbor_list:
-
-                # Add both sides of the connection
-                nearest_neighbors[gene_name].add(neighbor_name)
-                nearest_neighbors[neighbor_name].add(gene_name)
-
-        else:
-            singletons.add(gene_name)
-
-    # Keep track of which genes remain to be clustered
-    genes_remaining = set(nearest_neighbors.keys())
-
-    # Make sure that there are no genes marked "singleton" in appropriately
-    singletons = singletons - genes_remaining
-
-    logging.info("Added nearest neighbors: {:,} seconds".format(
-        round(time.time() - start_time, 2))
-    )
-
-    logging.info("Genes with neighbors: {:,} -- singletons: {:,}".format(
-        len(nearest_neighbors),
-        len(singletons)
-    ))
-
-    # Keep track of the number of genes that were input
-    n_genes_input = df.shape[0]
-    assert n_genes_input == len(nearest_neighbors) + len(singletons)
-
-    # Find CAGs greedily, taking the complete linkage group for each gene in random order
+    # Store CAGs as a dict of lists
     cags = {}
     cag_ix = 0
 
+    # Keep track of the singletons
+    singletons = set()
+
     # Keep track of the last 100 CAGs that were added
     trailing = TrackTrailing(n=500)
+
+    # Keep track of the number of genes that were input
+    n_genes_input = df.shape[0]
 
     # Keep clustering until everything is gone
     while len(genes_remaining) > 0 and trailing.max() > 10:
 
         # Get a list of neighborhoods to test
+        logging.info("Getting a list of gene neighborhoods")
         list_of_neighborhoods = [
             get_gene_neighborhood(
-                central_gene,
-                nearest_neighbors,
-                genes_remaining
+                central_gene_ix,
+                index,
+                df,
+                genes_remaining,
+                starting_n_neighbors,
+                max_dist,
+                threads
             )
-            for central_gene in np.random.choice(list(genes_remaining), 50)
+            for central_gene_ix in np.random.choice(list(genes_remaining), 50)
         ]
 
         # Add the singletons
@@ -463,6 +446,9 @@ def make_cags_with_ann(
                     genes_remaining.remove(n[0])
 
         list_of_neighborhoods = [n for n in list_of_neighborhoods if len(n) > 1]
+        logging.info("Nonsingleton neighborhoods: {:,}".format(
+            len(list_of_neighborhoods)
+        ))
 
         if len(list_of_neighborhoods) == 0:
             continue
@@ -508,21 +494,12 @@ def make_cags_with_ann(
                     genes_remaining = genes_remaining - linkage_cluster_set
 
                     if len(cags) % 1000 == 0:
-
+                        start_time = time.time()
                         df = df.reindex(index=list(genes_remaining))
-                    
-                        if len(cags) % 10000 == 0:
-
-                            start_time = time.time()
-                            nearest_neighbors = {
-                                k: nearest_neighbors[k] & genes_remaining
-                                for k in list(genes_remaining)
-                            }
-
-                            logging.info("Pruned the set of {:,} nearest neighbors: {:,} seconds".format(
-                                len(nearest_neighbors),
-                                round(time.time() - start_time, 2)
-                            ))
+                        logging.info("Trimmed abundance data to {:,} genes - {:,} seconds".format(
+                            df.shape[0], 
+                            round(time.time() - start_time, 2)
+                        ))
 
     # Add in all of the singletons
     logging.info("Adding in {:,} singletons that weren't clustered".format(
@@ -531,6 +508,19 @@ def make_cags_with_ann(
     for gene_name in list(genes_remaining) + list(singletons):
         cags[cag_ix] = [gene_name]
         cag_ix += 1
+
+    # Convert all CAGs to gene names
+    start_time = time.time()
+    cags = {
+        k: [
+            gene_names[gene_ix]
+            for gene_ix in v
+        ]
+        for k, v in cags.items()
+    }
+    logging.info("Added full names for CAGs - {:,} seconds elapsed".format(
+        round(time.time() - start_time, 2)
+    ))
 
     # Basic sanity checks
     assert all([len(v) > 0 for v in cags.values()])
