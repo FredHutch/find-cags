@@ -420,7 +420,29 @@ def make_cags_with_ann(
     # Keep track of the singletons
     singletons = set()
 
-    # Keep track of the last 100 CAGs that were added
+    # Set aside the singletons in the first round
+    for gene_ix, gene_distances in enumerate(index.knnQueryBatch(
+        df.values,
+        k=2,
+        num_threads=threads
+    )):
+        if any([
+            neighbor_ix != gene_ix and neighbor_dist <= max_dist
+            for neighbor_ix, neighbor_dist in zip(
+                gene_distances[0],
+                gene_distances[1]
+            )
+        ]) is False:
+            singletons.add(gene_ix)
+
+    # Remove the singletons from the genes remaining
+    genes_remaining = genes_remaining - singletons
+
+    logging.info("Masked a set of {:,} singletons in the first pass".format(
+        len(singletons)
+    ))
+
+    # Keep track of the last 150 CAGs that were added
     trailing = TrackTrailing(n=500)
 
     # Keep track of the number of genes that were input
@@ -536,27 +558,15 @@ def make_cags_with_ann(
 def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
     """Check to see if any CAGs are overlapping. If so, join them and combine the result."""
 
-    # Keep track of where it is safe to start adding new CAG IDs
-    new_cag_id = int(max(cags.keys()) + 1)
-
     # Make a dict linking each gene to its CAG - omitting singletons
     cag_dict = {
         gene_id: cag_id
         for cag_id, gene_id_list in cags.items()
         for gene_id in gene_id_list
-        if len(gene_id_list) > 1
     }
 
-    if len(set(cag_dict.values())) == 0:
-        logging.info("There are no non-singleton CAGs -- no need to cluster")
-        return
-
-    if len(set(cag_dict.values())) == 1:
-        logging.info("There is only 1 non-singleton CAG -- no need to cluster again")
-        return
-
     # Make a DF with the mean abundance of each CAG
-    logging.info("Computing mean abundances for {:,} CAGs and {:,} genes (omitting singletons)".format(
+    logging.info("Computing mean abundances for {:,} CAGs and {:,} genes".format(
         len(set(cag_dict.values())), len(cag_dict)
     ))
     cag_df = pd.concat([
@@ -564,76 +574,36 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
         pd.DataFrame({"cag": pd.Series(cag_dict)})
     ], axis=1).groupby("cag").mean()
 
-    # Make a list of lists of CAGs to regroup
-    list_of_cags_to_regroup = []
+    index = make_nmslib_index(cag_df)
+
+    # Keep track of which CAGs have been regrouped
+    already_regrouped = set()
 
     # Iterate over every CAG
-    for cag_ix, cag_id in enumerate(cag_df.index.values[:-1]):
-        # Calculate the pairwise distance to all other CAGs
-        cag_dists = cdist(
-            cag_df.reindex(index=[cag_id]), 
-            cag_df.iloc[cag_ix+1:],
-            metric=distance_metric
-        )[0]
+    for cag_ix, distances in enumerate(index.knnQueryBatch(
+        cag_df.values,
+        k=2,
+        num_threads=threads
+    )):
+        for neighbor_ix, d in zip(distances[0], distances[1]):
+            if neighbor_ix != cag_ix and d <= max_dist and cag_ix:
+                if cag_ix in already_regrouped or neighbor_ix in already_regrouped:
+                    continue
 
-        # Get the set of CAGs that will be regrouped
-        cags_to_regroup = [
-            k
-            for k, v in zip(cag_df.index.values[cag_ix+1:], cag_dists)
-            if v <= max_dist
-        ] + [cag_id]
+                already_regrouped.add(cag_ix)
+                already_regrouped.add(neighbor_ix)
+                
+                cag_name_1 = cag_df.index.values[cag_ix]
+                cag_name_2 = cag_df.index.values[neighbor_ix]
+                # Join the CAGs together
+                logging.info("Joining CAGs with {:,} and {:,} genes, average distance: {}".format(
+                    len(cags[cag_name_1]),
+                    len(cags[cag_name_2]),
+                    round(d, 4)
+                ))
 
-        if len(cags_to_regroup) > 1:
-            list_of_cags_to_regroup.append(cags_to_regroup)
-
-    # Now go through and regroup those CAGs
-    regrouped_cags = set()
-
-    for cags_to_regroup in list_of_cags_to_regroup:
-
-        # Don't regroup any CAGs that have already been regrouped
-        if any([
-            cag_id in regrouped_cags
-            for cag_id in cags_to_regroup
-        ]):
-            continue
-
-        # Keep track of CAGs that have been regrouped
-        regrouped_cags |= set(cags_to_regroup)
-
-        # Get the set of genes to regroup
-        genes_to_regroup = [
-            gene_name
-            for cag_name in cags_to_regroup
-            for gene_name in cags[cag_name]
-        ]
-
-        logging.info("Regrouping a set of {:,} CAGs and {:,} genes".format(
-            len(cags_to_regroup),
-            len(genes_to_regroup)
-        ))
-
-        # Make new groups
-        new_cags = find_flat_clusters(
-            df.reindex(index=genes_to_regroup),
-            max_dist,
-            linkage_type=linkage_type,
-            distance_metric=distance_metric,
-            threads=threads
-        )
-
-        logging.info("Made a new set of {:,} CAGs".format(
-            len(set(new_cags))
-        ))
-
-        # Remove the old CAGs
-        for cag_name in cags_to_regroup:
-            del cags[cag_name]
-
-        # Add the new CAGs
-        for cag_name, genes_in_cag in pd.Series(genes_to_regroup).groupby(new_cags):
-            cags[new_cag_id] = genes_in_cag.values.tolist()
-            new_cag_id += 1
+                cags[cag_name_1].extend(cags[cag_name_2])
+                del cags[cag_name_2]
 
 
 def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
@@ -661,7 +631,7 @@ def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkag
         ))
 
         n_iters += 1
-        if n_iters >= 5:
+        if n_iters >= 10:
             logging.info("Done merging together CAGs")
             break
 
