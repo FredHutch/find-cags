@@ -247,7 +247,7 @@ def make_nmslib_index(df, verbose=True):
     return index
 
 
-def get_gene_neighborhood(central_gene_list, index, df, genes_remaining, starting_n_neighbors, max_dist, threads):
+def get_gene_neighborhood(central_gene_list, index, df, genes_remaining, starting_n_neighbors, max_dist, threads, max_neighborhood_size=10000):
     """
     Return the gene neighborhood for a particular gene.
     
@@ -257,6 +257,7 @@ def get_gene_neighborhood(central_gene_list, index, df, genes_remaining, startin
     `genes_remaining`: The set of genes that are remaining at this point of the analysis.
     `starting_n_neighbors`: Number of neighbors to find
     `max_dist`: Maximum distance threshold
+    `max_neighborhood_size`: Limit the maximum size of a given gene neighborhood
 
     Return the second order neighbors of the central gene (as a set).
     """
@@ -298,7 +299,12 @@ def get_gene_neighborhood(central_gene_list, index, df, genes_remaining, startin
                 if d <= max_dist and ix in genes_remaining
             }
 
-        list_of_neighborhoods.append(list(neighborhood))
+        # Limit the total size of the neighborhood
+        neighborhood = list(neighborhood)
+        if len(neighborhood) > max_neighborhood_size:
+            neighborhood = neighborhood[:max_neighborhood_size]
+
+        list_of_neighborhoods.append(neighborhood)
 
     return list_of_neighborhoods
 
