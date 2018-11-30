@@ -492,18 +492,15 @@ def make_cags_with_ann(
             continue
 
         # Find the linkage clusters in parallel
-        for list_of_clusters in pool.imap_unordered(
-            complete_linkage_clustering,
-            [
-                (
-                    df.reindex(index=neighborhood),
-                    max_dist, 
-                    distance_metric, 
-                    linkage_type
-                )
-                for neighborhood in list_of_neighborhoods
-            ]
-        ):
+        for list_of_clusters in [
+            complete_linkage_clustering((
+                df.reindex(index=neighborhood),
+                max_dist, 
+                distance_metric, 
+                linkage_type
+            ))
+            for neighborhood in list_of_neighborhoods
+        ]:
             for linkage_cluster in list_of_clusters:
 
                 # Make a set for comparisons
