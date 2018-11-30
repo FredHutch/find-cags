@@ -373,15 +373,22 @@ def find_flat_clusters(
         ])
 
     # Now compute the flat clusters
-    flat_clusters = fcluster(
-        linkage(
-            dm,
-            method=linkage_type,
-            metric="precomputed",
-        ), 
-        max_dist, 
-        criterion="distance"
-    )
+    try:
+        flat_clusters = fcluster(
+            linkage(
+                dm,
+                method=linkage_type,
+                metric="precomputed",
+            ), 
+            max_dist, 
+            criterion="distance"
+        )
+    except:
+        logging.info("Fatal problem with dataframe")
+        print(df.values)
+        logging.info("Fatal problem with distance matrix")
+        print(dm)
+        assert 1 == 0
 
     assert len(flat_clusters) == df.shape[0]
 
