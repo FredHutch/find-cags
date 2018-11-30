@@ -354,6 +354,8 @@ def find_flat_clusters(
 ):
     """Find the set of flat clusters for a given set of observations."""
 
+    assert df.isnull().any().any() is False, "NaN value(s) in DataFrame"
+
     if threads == 1 or df.shape[0] < 2000:
         dm = pdist(df.values, metric=distance_metric)
     else:
