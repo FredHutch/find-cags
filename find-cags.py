@@ -387,7 +387,8 @@ def find_flat_clusters(
         logging.info("Fatal problem with dataframe")
         print(df.values)
         logging.info("Fatal problem with distance matrix")
-        print(dm)
+        for x in dm:
+            print(x)
         assert 1 == 0
 
     assert len(flat_clusters) == df.shape[0]
