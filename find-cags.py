@@ -357,12 +357,7 @@ def find_flat_clusters(
     assert df.isnull().any().any() == False, "NaN value(s) in DataFrame"
 
     if threads == 1 or df.shape[0] < 2000:
-        try:
-            dm = pdist(df.values, metric=distance_metric)
-        except:
-            logging.info("Fatal problem with dataframe")
-            print(df.values)
-            assert 1 == 0
+        dm = pdist(df.values, metric=distance_metric)
     else:
         dm = pairwise_distances(df.values, metric=distance_metric, n_jobs=threads)
 
