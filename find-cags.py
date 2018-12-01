@@ -372,6 +372,9 @@ def find_flat_clusters(
             for ix in range(df.shape[0] - 1)
         ])
 
+    # Fill in missing values with 1
+    dm[np.isnan(dm)] = 1
+
     # Now compute the flat clusters
     try:
         flat_clusters = fcluster(
