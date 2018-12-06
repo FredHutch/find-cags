@@ -11,6 +11,10 @@ RUN pip3 install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 feather-format \
 
 
 # Install the library from test.pypi.org
+RUN pip3 install pandas>=0.20.3 numpy>=1.13.1 scipy>=0.19.1 awscli \
+                 boto3>=1.4.7 python-dateutil==2.6.0 fastcluster>=1.1.24 \
+                 nmslib>=1.7.2 scikit-learn>=0.19.2
+
 RUN python3 -m pip install --index-url https://test.pypi.org/simple/ ann_linkage_clustering==v0.11
 
 # Add the script to the PATH
