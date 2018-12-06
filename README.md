@@ -11,6 +11,16 @@ metagenomic analysis via whole-genome shotgun sequences, where genes
 from the same genome tend to be found at a similar abundance.
 
 
+#### Code Availability
+
+The code in this repository is provided in two different formats. There
+is a library of Python code (`ann_linkage_clustering` in PyPI) that can
+be used to make CAGs directly from a Pandas DataFrame. There is also a
+Docker image that is intended to be run with the script `find-cags.py`.
+The documentation below describes the end-to-end workflow that is available
+with that Docker image and the single wrapper script. 
+
+
 #### Input Data Format
 
 It is assumed that all input data will be in JSON format (gzip optional).
@@ -31,16 +41,99 @@ Therefore the features that must be specified by the user are:
   * Key for the gene_id within each element of the list (e.g. "id")
   * Key for the abundance metric within each element (e.g. "depth")
 
+Here is an example of what that might look like in JSON format:
+
+```json
+{
+  "results": [
+    {
+      "id": "gene_1",
+      "depth": 1.1
+    },
+    {
+      "id": "gene_2",
+      "depth": 0.2
+    },
+    {
+      "id": "gene_3",
+      "depth": 3000.015
+    },
+  ],
+  "logs": [
+    "any other data",
+    "that you would like",
+    "to include in this file is just fine."
+  ]
+}
+```
+
 **NOTE**: All abundance metric values must be >= 0
 
 
 #### Running from any DataFrame
 
 If you have any other format of data, you can use this code to find CAGs as well.
-At the moment, this isn't explicitly supported, but there are functions within the
-`find-cags.py` file that you can import and use directly. In the future it might
-be useful to extract this codebase as an installable module, but that has not been
-done yet.
+The big difference is that this script does some data normalization that is very
+helpful. For example, if you are using cosine distance, it's best to have the value
+indicating absence to be zero. So if you are using the centered log-ratio (clr)
+normalization approach, you really need to set a standard cuttoff across all samples,
+trim the lowest value to that, and then set that lowest value to zero. This is all
+done automatically by `find-cags.py`, but you can absolutely use the same functions
+to make CAGs with any other input data format or normalization approach.
+
+
+You can follow the workflow in the `find-cags.py` script, which basically follows
+this workflow (assuming that `df` is your DataFrame of abundance data, with genes
+in rows and samples in columns):
+
+```python
+from multiprocessing import Pool
+from ann_linkage_clustering.lib import make_cags_with_ann
+from ann_linkage_clustering.lib import iteratively_refine_cags
+from ann_linkage_clustering.lib import make_nmslib_index
+
+# Maximum distance threshold (use any value)
+max_dist=0.2
+
+# Distance metric (only 'cosine' is supported)
+distance_metric="cosine"
+
+# Multiprocessing pool (pick any number of threads, in this case `1`)
+threads = 1
+pool = Pool(threads)
+
+# Linkage type (only `average` is fully supported)
+linkage_type = "average"
+
+# Make the ANN index
+index = make_nmslib_index(df)
+
+# Make the CAGs in the first round
+cags = make_cags_with_ann(
+    index,
+    max_dist,
+    df,
+    pool,
+    threads=threads,
+    distance_metric=distance_metric,
+    linkage_type=linkage_type
+)
+
+# Iteratively refine the CAGs (this is the part that is hardedcoded to 
+# use average linkage clustering, while the step above could technically
+# use any of `complete`, `single`, `average`, etc.)
+iteratively_refine_cags(
+    cags,
+    df.copy(),
+    max_dist,
+    distance_metric=distance_metric,
+    linkage_type=linkage_type,
+    threads=threads
+)
+```
+
+At the end of all of that, the `cags` object is a dictionary containing
+all of the identified groups.
 
 
 #### Sample Sheet
@@ -52,8 +145,8 @@ names as key and file locations as values.
 
 #### Data Locations
 
-At the moment we will support data found in (a) the local file system 
-or (b) AWS S3.
+At the moment we will support data found in either the local file system 
+or AWS S3.
 
 
 #### Test Dataset
@@ -147,43 +240,3 @@ optional arguments:
                         genes.
 
   ```
-
-#### Helper Scripts
-
-```
-usage: make-cag-feather.py [-h] --cag-json-fp CAG_JSON_FP --sample-sheet
-                           SAMPLE_SHEET --output-prefix OUTPUT_PREFIX
-                           --output-folder OUTPUT_FOLDER
-                           [--normalization NORMALIZATION]
-                           [--temp-folder TEMP_FOLDER]
-                           [--results-key RESULTS_KEY]
-                           [--abundance-key ABUNDANCE_KEY]
-                           [--gene-id-key GENE_ID_KEY]
-
-Read in a set of samples and make a feather file with the CAG abundances
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --cag-json-fp CAG_JSON_FP
-                        Location for CAGs (.json[.gz]).
-  --sample-sheet SAMPLE_SHEET
-                        Location for sample sheet (.json[.gz]).
-  --output-prefix OUTPUT_PREFIX
-                        Prefix for output files.
-  --output-folder OUTPUT_FOLDER
-                        Folder to place results. (Supported: s3://, or local
-                        path).
-  --normalization NORMALIZATION
-                        Normalization factor per-sample (median, sum, or clr).
-  --temp-folder TEMP_FOLDER
-                        Folder for temporary files.
-  --results-key RESULTS_KEY
-                        Key identifying the list of gene abundances for each
-                        sample JSON.
-  --abundance-key ABUNDANCE_KEY
-                        Key identifying the abundance value for each element
-                        in the results list.
-  --gene-id-key GENE_ID_KEY
-                        Key identifying the gene ID for each element in the
-                        results list.
-```
