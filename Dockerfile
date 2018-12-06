@@ -7,7 +7,12 @@ RUN apt update && \
     awscli libcurl4-openssl-dev libhdf5-dev python-tables hdf5-tools
 
 RUN pip3 install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 feather-format \
-                 nmslib tables fastcluster scikit-learn ann_linkage_clustering
+                 nmslib tables fastcluster scikit-learn
+
+
+# Install the repo as a package
+ADD . /usr/local/ann_linkage_clustering
+RUN python3 /usr/local/ann_linkage_clustering/setup.py install
 
 # Add the script to the PATH
 ADD ./find-cags.py /usr/local/bin/
