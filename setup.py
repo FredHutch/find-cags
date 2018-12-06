@@ -17,7 +17,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='ann_linkage_clustering',
-    version='0.10',
+    version='0.11',
     description='Linkage clustering via Approximate Nearest Neighbors',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -36,7 +36,7 @@ setup(
         "pandas>=0.20.3",
         "numpy>=1.13.1",
         "scipy>=0.19.1",
-        "awscli>=1.11.146",
+        "awscli",
         "boto3>=1.4.7",
         "python-dateutil==2.6.0",
         "fastcluster>=1.1.24",
