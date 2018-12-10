@@ -185,7 +185,7 @@ def normalize_abundance_dataframe(df, normalization):
             df.isnull().any(axis=1),
             df.isnull().any(axis=0)
         ].to_string())
-    assert df.isnull().any().any() is False
+    assert df.isnull().any().any() == False
 
     return df
 
