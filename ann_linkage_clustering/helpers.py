@@ -174,7 +174,7 @@ def normalize_abundance_dataframe(df, normalization):
 
     # Check to see if there are NaN values
     if df.isnull().any().any():
-        logging.info("Found NaN values in the abundance dataframe -- must stop execution")
+        logging.info("Found NaN values in the abundance dataframe")
         logging.info("Number of rows with NaN values: {:,}".format(
             df.isnull().any(axis=1).sum()
         ))
@@ -185,6 +185,16 @@ def normalize_abundance_dataframe(df, normalization):
             df.isnull().any(axis=1),
             df.isnull().any(axis=0)
         ].to_string())
+
+        if normalization == "clr":
+            logging.info("Filling in missing values with lowest value ({})".format(
+                lowest_non_zero_value
+            ))
+            df.fillna(lowest_non_zero_value, inplace=True)
+        else:
+            logging.info("Filling missing values with 0")
+            df.fillna(0, inplace=True)
+
     assert df.isnull().any().any() == False
 
     return df
