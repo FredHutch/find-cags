@@ -13,8 +13,9 @@ RUN pip3 install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 feather-format \
 
 # Add the script to the PATH
 ADD . /usr/local/ann_linkage_clustering/
-RUN cd /usr/local/bin/ann_linkage_clustering && \
-    python3 setup.py install
+RUN cd /usr/local/ann_linkage_clustering && \
+    python3 setup.py install && \
+    ln -s /usr/local/ann_linkage_clustering/find-cags.py /usr/local/bin/
 
 RUN mkdir /scratch
 
