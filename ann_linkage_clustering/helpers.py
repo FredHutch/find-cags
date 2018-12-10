@@ -145,7 +145,6 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     return dat
 
 
-
 def normalize_abundance_dataframe(df, normalization):
     """Normalize the raw depth values on a per-sample basis."""
 
@@ -173,8 +172,19 @@ def normalize_abundance_dataframe(df, normalization):
         # Now take the log10
         df = df.apply(np.log10)
 
-    # There are no NaN values
-    assert df.shape[0] == df.dropna().shape[0]
+    # Check to see if there are NaN values
+    if df.isnull().any().any():
+        logging.info("Found NaN values in the abundance dataframe -- must stop execution")
+        logging.info("Number of rows with NaN values: {:,}".format(
+            df.isnull().any(axis=1).sum()
+        ))
+        logging.info("Number of columns with NaN values: {:,}".format(
+            df.isnull().any(axis=0).sum()
+        ))
+        logging.info(df.loc[
+            df.isnull().any(axis=1),
+            df.isnull().any(axis=0)
+        ].to_string())
 
     return df
 
