@@ -116,11 +116,13 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
         # Get the JSON for this particular sample
         sample_dat = read_json(sample_path)
 
-        # Make sure that the key for the results is in this file
-        assert results_key in sample_dat
+        # If this is a dict, make sure that the key for the results is in this file
+        if isinstance(sample_dat, dict):
+            assert results_key in sample_dat
 
-        # Subset down to the list of results
-        sample_dat = sample_dat[results_key]
+            # Subset down to the list of results
+            sample_dat = sample_dat[results_key]
+
         assert isinstance(sample_dat, list)
 
         # Make sure that every element in the list has the indicated keys
