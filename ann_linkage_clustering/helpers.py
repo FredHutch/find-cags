@@ -253,7 +253,4 @@ def read_json(fp):
         else:
             dat = json.load(open(fp, "rt"))
 
-    # Make sure that the sample sheet is a dictionary
-    assert isinstance(dat, dict)
-
     return dat
