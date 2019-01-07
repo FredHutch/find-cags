@@ -130,11 +130,11 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
             assert abundance_key in d
             assert gene_id_key in d
 
-        # Format as a Series
-        dat[sample_name] = pd.Series({
+        # Format as a dict
+        dat[sample_name] = {
             d[gene_id_key]: np.float16(d[abundance_key])
             for d in sample_dat
-        })
+        }
 
     logging.info("Formatting as a DataFrame")
     dat = pd.DataFrame(dat).fillna(np.float16(0))
