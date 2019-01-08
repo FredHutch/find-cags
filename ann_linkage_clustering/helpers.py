@@ -178,11 +178,19 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     ))
 
 
+    logging.info("Converting to float16")
+    dat = {
+        sample_name: pd.Series(sample_dat).apply(np.float16)
+        for sample_name, sample_dat in dat.items()
+    }
     logging.info("Formatting as a DataFrame")
     dat = pd.DataFrame(dat)
-    dat = dat.fillna(
-        np.min([dat.min().min(), np.float16(0)])
-    ).applymap(np.float16)
+
+    logging.info("Filling missing values")
+    dat.fillna(
+        np.min([dat.min().min(), np.float16(0)]),
+        inplace=True
+    )
 
     logging.info("Read in data for {:,} genes across {:,} samples".format(
         dat.shape[0],
