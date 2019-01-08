@@ -106,7 +106,6 @@ def make_summary_abund_df(df, cags):
     return summary_df
 
 
-
 def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_key, normalization, min_samples):
     """Make a single DataFrame with the abundance (depth) from all samples."""
 
@@ -165,7 +164,7 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     df = {
         sample_name: {
             gene_id: gene_abund
-            for gene_id, gene_abund in sample_dat
+            for gene_id, gene_abund in sample_dat.items()
             if gene_id in genes_to_keep
         }
         for sample_name, sample_dat in dat.items()
