@@ -1,4 +1,5 @@
 import boto3
+from collections import defaultdict
 import gzip
 import io
 import json
@@ -8,6 +9,7 @@ import os
 import pandas as pd
 import shutil
 import sys
+import time
 import traceback
 
 
@@ -105,8 +107,11 @@ def make_summary_abund_df(df, cags):
 
 
 
-def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_key):
+def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_key, normalization, min_samples):
     """Make a single DataFrame with the abundance (depth) from all samples."""
+
+    assert isinstance(min_samples, int) and min_samples > 0
+    assert min_samples <= len(sample_sheet)
 
     # Collect all of the abundance information in this single dict
     dat = {}
@@ -130,14 +135,55 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
             assert abundance_key in d
             assert gene_id_key in d
 
-        # Format as a dict
-        dat[sample_name] = {
+        # Format as a dict, while normalizing abundances
+        dat[sample_name] = normalize_abundance_vector(pd.Series({
             d[gene_id_key]: np.float16(d[abundance_key])
             for d in sample_dat
+        }), normalization).to_dict()
+
+    # Filter to the minimum number of samples
+    logging.info(
+        "Subsetting to genes found in at least {} samples".format(min_samples))
+
+    # Count the number of times each gene is seen
+    gene_counts = defaultdict(int)
+    for sample_name in dat:
+        for gene_id in dat[sample_name].keys():
+            gene_counts[gene_id] += 1
+
+    genes_to_keep = set([
+        gene_id
+        for gene_id, gene_count in gene_counts.items()
+        if gene_count >= min_samples
+    ])
+
+    # Keep track of the number of genes filtered, and the time elapsed
+    n_before_filtering = len(gene_counts)
+    start_time = time.time()
+
+    # Filter
+    df = {
+        sample_name: {
+            gene_id: gene_abund
+            for gene_id, gene_abund in sample_dat
+            if gene_id in genes_to_keep
         }
+        for sample_name, sample_dat in dat.items()
+    }
+
+    logging.info("{:,} / {:,} genes found in >= {:,} samples ({:,} seconds elapsed)".format(
+        len(genes_to_keep),
+        n_before_filtering,
+        min_samples,
+        round(time.time() - start_time, 2)
+    ))
+
 
     logging.info("Formatting as a DataFrame")
-    dat = pd.DataFrame(dat).fillna(np.float16(0))
+    dat = pd.DataFrame(dat)
+    dat = dat.fillna(
+        np.min([dat.min().min(), np.float16(0)])
+    ).applymap(np.float16)
 
     logging.info("Read in data for {:,} genes across {:,} samples".format(
         dat.shape[0],
@@ -145,6 +191,26 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     ))
 
     return dat
+
+
+def normalize_abundance_vector(vec, normalization):
+    """Normalize the raw depth values for a single sample."""
+
+    assert normalization in ["median", "sum", "clr"]
+
+    # Normalize the abundance
+
+    if normalization == "median":
+        # Divide by the median
+        return vec / vec.median()
+
+    elif normalization == "sum":
+        # Divide by the sum
+        return vec / vec.sum()
+
+    elif normalization == "clr":
+        # Divide by the median and take log10
+        return (vec / vec.sum()).apply(np.log10)
 
 
 def normalize_abundance_dataframe(df, normalization):

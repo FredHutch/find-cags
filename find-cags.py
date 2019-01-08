@@ -16,7 +16,6 @@ from ann_linkage_clustering.lib import make_nmslib_index
 from ann_linkage_clustering.helpers import return_results
 from ann_linkage_clustering.helpers import make_summary_abund_df
 from ann_linkage_clustering.helpers import make_abundance_dataframe
-from ann_linkage_clustering.helpers import normalize_abundance_dataframe
 from ann_linkage_clustering.helpers import exit_and_clean_up
 from ann_linkage_clustering.helpers import read_json
 
@@ -89,16 +88,10 @@ def find_cags(
             sample_sheet,
             results_key,
             abundance_key,
-            gene_id_key
+            gene_id_key,
+            normalization,
+            min_samples
         )
-    except:
-        exit_and_clean_up(temp_folder)
-
-    # NORMALIZING RAW ABUNDANCES
-
-    # Normalize the raw depth abundances
-    try:
-        df = normalize_abundance_dataframe(df, normalization)
     except:
         exit_and_clean_up(temp_folder)
 
@@ -120,24 +113,6 @@ def find_cags(
 
         logging.info("Applying the CLR floor: {}".format(clr_floor))
         df = df.applymap(lambda v: v if v > clr_floor else clr_floor)
-
-    # If min_samples > 1, subset the genes
-    logging.info(
-        "Subsetting to genes found in at least {} samples".format(min_samples))
-
-    # Keep track of the number of genes filtered, and the time elapsed
-    n_before_filtering = df.shape[0]
-    start_time = time.time()
-
-    # Filter
-    df = df.loc[(df > df.min().min()).sum(axis=1) >= min_samples]
-
-    logging.info("{:,} / {:,} genes found in >= {:,} samples ({:,} seconds elapsed)".format(
-        df.shape[0],
-        n_before_filtering,
-        min_samples,
-        round(time.time() - start_time, 2)
-    ))
 
     # If this is being run in testing mode, subset to 2,000 genes
     if test:
