@@ -161,7 +161,7 @@ def make_abundance_dataframe(sample_sheet, results_key, abundance_key, gene_id_k
     start_time = time.time()
 
     # Filter
-    df = {
+    dat = {
         sample_name: {
             gene_id: gene_abund
             for gene_id, gene_abund in sample_dat.items()
