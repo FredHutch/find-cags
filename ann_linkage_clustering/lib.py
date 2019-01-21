@@ -285,17 +285,16 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
     logging.info("Computing mean abundances for {:,} CAGs and {:,} genes".format(
         len(set(cag_dict.values())), len(cag_dict)
     ))
-    cag_df = pd.concat([
-        df,
-        pd.DataFrame({"cag": pd.Series(cag_dict)})
-    ], axis=1).groupby("cag").mean()
+    cag_df = df.groupby(cag_dict.get).mean()
 
+    logging.info("Making an ANN index")
     index = make_nmslib_index(cag_df)
 
     # Keep track of which CAGs have been regrouped
     already_regrouped = set()
 
     # Iterate over every CAG
+    logging.info("Starting to iterate over CAGs")
     for cag_ix, distances in enumerate(index.knnQueryBatch(
         cag_df.values,
         k=2,

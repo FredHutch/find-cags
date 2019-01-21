@@ -147,6 +147,9 @@ def find_cags(
     logging.info("Closing the process pool")
     pool.close()
 
+    logging.info("Clearing the previous index from memory")
+    del index
+
     # Refine the CAGs by merging overlapping groups
     try:
         iteratively_refine_cags(
