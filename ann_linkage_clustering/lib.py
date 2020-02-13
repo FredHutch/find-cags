@@ -321,7 +321,7 @@ def join_overlapping_cags(cags, df, max_dist, distance_metric="cosine", linkage_
                 del cags[cag_name_2]
 
 
-def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1):
+def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkage_type="average", threads=1, max_iters=10):
     """Refine the CAGs by merging all groups that are overlapping."""
 
     # Repeat until all overlapping CAGs are merged, maxing out after a few iterations
@@ -346,7 +346,7 @@ def iteratively_refine_cags(cags, df, max_dist, distance_metric="cosine", linkag
         ))
 
         n_iters += 1
-        if n_iters >= 10:
+        if n_iters >= max_iters:
             logging.info("Done merging together CAGs")
             break
 
