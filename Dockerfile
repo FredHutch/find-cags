@@ -7,9 +7,10 @@ RUN apt update && \
     awscli libcurl4-openssl-dev libhdf5-dev python-tables hdf5-tools
 
 # Install Python packages
-RUN pip3 install -U pip
-RUN pip3 install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 feather-format \
-                 tables fastcluster scikit-learn nmslib 
+RUN python3 -m pip install -U pip && \
+    python3 -m pip install feather-format && \
+    python3 -m pip install pandas>=0.22.0 scipy>=1.0.1 boto3>=1.7.2 \
+                 fastcluster scikit-learn nmslib 
 
 # Add the script to the PATH
 ADD . /usr/local/ann_linkage_clustering/
