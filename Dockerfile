@@ -5,7 +5,7 @@ MAINTAINER sminot@fredhutch.org
 RUN apt update && \
     DEBIAN_FRONTEND="noninteractive" \
     apt-get install -y wget curl unzip python3 python3-pip bats \
-    awscli libcurl4-openssl-dev libhdf5-dev python-tables hdf5-tools \
+    awscli libcurl4-openssl-dev libhdf5-dev hdf5-tools \
     libhdf5-serial-dev
 
 # Install Python packages
