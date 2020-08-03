@@ -38,7 +38,7 @@ setup(
         "scipy>=0.19.1",
         "awscli",
         "boto3>=1.4.7",
-        "python-dateutil==2.6.0",
+        "python-dateutil>=2.6.0",
         "fastcluster>=1.1.24",
         "nmslib>=1.7.2",
         "scikit-learn>=0.19.2"
