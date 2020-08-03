@@ -11,7 +11,7 @@ RUN apt update && \
 RUN python3 -m pip install -U pip && \
     python3 -m pip install feather-format && \
     python3 -m pip install pandas>=1.0.3 scipy>=1.0.1 boto3>=1.7.2 \
-                 fastcluster scikit-learn nmslib && \
+                 fastcluster scikit-learn nmslib zarr && \
     HDF5_DIR=/usr/lib/x86_64-linux-gnu/hdf5/serial/ pip3 install tables
 
 # Add the script to the PATH
